@@ -28,6 +28,7 @@
 #include <asm/mem_paging.h>
 #include <asm/pt-contig-markers.h>
 #include <asm/setup.h>
+#include <asm/iommu.h>
 
 const struct iommu_init_ops *__initdata iommu_init_ops;
 struct iommu_ops __ro_after_init iommu_ops;
@@ -186,12 +187,15 @@ void __hwdom_init arch_iommu_check_autotranslated_hwdom(struct domain *d)
 int arch_iommu_domain_init(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
+    struct arch_iommu_context *default_ctx = iommu_default_context(&hd->arch);
 
     spin_lock_init(&hd->arch.mapping_lock);
 
-    INIT_PAGE_LIST_HEAD(&hd->arch.pgtables.list);
-    spin_lock_init(&hd->arch.pgtables.lock);
+    INIT_PAGE_LIST_HEAD(&default_ctx->pgtables.list);
+    spin_lock_init(&default_ctx->pgtables.lock);
     INIT_LIST_HEAD(&hd->arch.identity_maps);
+
+    default_ctx->initialized = 1;
 
     return 0;
 }
@@ -203,8 +207,15 @@ void arch_iommu_domain_destroy(struct domain *d)
      * domain is destroyed. Note that arch_iommu_domain_destroy() is
      * called unconditionally, so pgtables may be uninitialized.
      */
-    ASSERT(!dom_iommu(d)->platform_ops ||
-           page_list_empty(&dom_iommu(d)->arch.pgtables.list));
+    ASSERT(!dom_iommu(d)->platform_ops);
+
+    for (unsigned int i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
+        struct arch_iommu_context *ctx = &dom_iommu(d)->arch.contexts[i];
+
+        if (ctx->initialized)
+            ASSERT(page_list_empty(&ctx->pgtables.list));
+    }
+
 }
 
 struct identity_map {
@@ -357,7 +368,7 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
             if ( iomem_access_permitted(d, s, s) )
             {
                 rc = iommu_map(d, _dfn(s), _mfn(s), 1, perms,
-                               &info->flush_flags);
+                               &info->flush_flags, 0);
                 if ( rc < 0 )
                     break;
                 /* Must map a frame at least, which is what we request for. */
@@ -367,7 +378,7 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
             s++;
         }
         while ( (rc = iommu_map(d, _dfn(s), _mfn(s), e - s + 1,
-                                perms, &info->flush_flags)) > 0 )
+                                perms, &info->flush_flags, 0)) > 0 )
         {
             s += rc;
             process_pending_softirqs();
@@ -435,6 +446,23 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
             rc = rangeset_remove_range(map, PFN_DOWN(entry.addr),
                                        PFN_DOWN(entry.addr + entry.size - 1));
             if ( rc )
+                printk(XENLOG_WARNING
+                       "%pd: identity mapping of %lx failed: %d\n",
+                       d, pfn, rc);
+        }
+        else if ( pfn != start + count || perms != start_perms )
+        {
+            long rc;
+
+        commit:
+            while ( (rc = iommu_map(d, _dfn(start), _mfn(start), count,
+                                    start_perms | IOMMUF_preempt,
+                                    &map_data.flush_flags, 0)) > 0 )
+            {
+                start += rc;
+                count -= rc;
+                process_pending_softirqs();
+            }
                 panic("IOMMU failed to remove unusable memory: %d\n", rc);
             continue;
 
@@ -591,7 +619,7 @@ void iommu_free_domid(domid_t domid, unsigned long *map)
         BUG();
 }
 
-int iommu_free_pgtables(struct domain *d)
+int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
 {
     struct domain_iommu *hd = dom_iommu(d);
     struct page_info *pg;
@@ -607,9 +635,9 @@ int iommu_free_pgtables(struct domain *d)
      * Pages will be moved to the free list below. So we want to
      * clear the root page-table to avoid any potential use after-free.
      */
-    iommu_vcall(hd->platform_ops, clear_root_pgtable, d);
+    iommu_vcall(hd->platform_ops, clear_root_pgtable, d, ctx);
 
-    while ( (pg = page_list_remove_head(&hd->arch.pgtables.list)) )
+    while ( (pg = page_list_remove_head(&ctx->pgtables.list)) )
     {
         free_domheap_page(pg);
 
@@ -621,6 +649,7 @@ int iommu_free_pgtables(struct domain *d)
 }
 
 struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
+                                      struct arch_iommu_context *ctx,
                                       uint64_t contig_mask)
 {
     unsigned int memflags = 0;
@@ -665,9 +694,9 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
 
     unmap_domain_page(p);
 
-    spin_lock(&hd->arch.pgtables.lock);
-    page_list_add(pg, &hd->arch.pgtables.list);
-    spin_unlock(&hd->arch.pgtables.lock);
+    spin_lock(&ctx->pgtables.lock);
+    page_list_add(pg, &ctx->pgtables.list);
+    spin_unlock(&ctx->pgtables.lock);
 
     return pg;
 }
@@ -706,13 +735,13 @@ static void cf_check free_queued_pgtables(void *arg)
     }
 }
 
-void iommu_queue_free_pgtable(struct domain_iommu *hd, struct page_info *pg)
+void iommu_queue_free_pgtable(struct arch_iommu_context *ctx, struct page_info *pg)
 {
     unsigned int cpu = smp_processor_id();
 
-    spin_lock(&hd->arch.pgtables.lock);
-    page_list_del(pg, &hd->arch.pgtables.list);
-    spin_unlock(&hd->arch.pgtables.lock);
+    spin_lock(&ctx->pgtables.lock);
+    page_list_del(pg, &ctx->pgtables.list);
+    spin_unlock(&ctx->pgtables.lock);
 
     page_list_add_tail(pg, &per_cpu(free_pgt_list, cpu));
 

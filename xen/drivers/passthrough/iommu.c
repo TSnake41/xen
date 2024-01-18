@@ -245,13 +245,12 @@ static void cf_check iommu_dump_page_tables(unsigned char key)
 
     for_each_domain(d)
     {
-        if ( is_hardware_domain(d) || !is_iommu_enabled(d) )
+        if ( !is_iommu_enabled(d) )
             continue;
 
         if ( iommu_use_hap_pt(d) )
         {
             printk("%pd sharing page tables\n", d);
-            continue;
         }
 
         iommu_vcall(dom_iommu(d)->platform_ops, dump_page_tables, d);
@@ -323,7 +322,7 @@ static unsigned int mapping_order(const struct domain_iommu *hd,
 
 long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                unsigned long page_count, unsigned int flags,
-               unsigned int *flush_flags)
+               unsigned int *flush_flags, u8 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
@@ -348,7 +347,8 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
             return i;
 
         rc = iommu_call(hd->platform_ops, map_page, d, dfn, mfn,
-                        flags | IOMMUF_order(order), flush_flags);
+                        flags | IOMMUF_order(order), flush_flags,
+                        ctx_no);
 
         if ( likely(!rc) )
             continue;
@@ -359,7 +359,7 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                    d->domain_id, dfn_x(dfn), mfn_x(mfn), rc);
 
         /* while statement to satisfy __must_check */
-        while ( iommu_unmap(d, dfn0, i, 0, flush_flags) )
+        while ( iommu_unmap(d, dfn0, i, 0, flush_flags, ctx_no) )
             break;
 
         if ( !is_hardware_domain(d) )
@@ -386,7 +386,7 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
     int rc;
 
     ASSERT(!(flags & IOMMUF_preempt));
-    rc = iommu_map(d, dfn, mfn, page_count, flags, &flush_flags);
+    rc = iommu_map(d, dfn, mfn, page_count, flags, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
         rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags);
@@ -395,7 +395,8 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
 }
 
 long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
-                 unsigned int flags, unsigned int *flush_flags)
+                 unsigned int flags, unsigned int *flush_flags,
+                 u8 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
@@ -420,7 +421,8 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
             return i;
 
         err = iommu_call(hd->platform_ops, unmap_page, d, dfn,
-                         flags | IOMMUF_order(order), flush_flags);
+                         flags | IOMMUF_order(order), flush_flags,
+                         ctx_no);
 
         if ( likely(!err) )
             continue;
@@ -454,7 +456,7 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
 int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 {
     unsigned int flush_flags = 0;
-    int rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags);
+    int rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
         rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags);
@@ -463,14 +465,14 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 }
 
 int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
-                      unsigned int *flags)
+                      unsigned int *flags, u8 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
 
     if ( !is_iommu_enabled(d) || !hd->platform_ops->lookup_page )
         return -EOPNOTSUPP;
 
-    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags);
+    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags, ctx_no);
 }
 
 int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,

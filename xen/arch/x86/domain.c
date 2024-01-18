@@ -2331,6 +2331,7 @@ static int relinquish_memory(
 int domain_relinquish_resources(struct domain *d)
 {
     int ret;
+    unsigned int i;
     struct vcpu *v;
 
     BUG_ON(!cpumask_empty(d->dirty_cpumask));
@@ -2374,9 +2375,17 @@ int domain_relinquish_resources(struct domain *d)
 
     PROGRESS(iommu_pagetables):
 
-        ret = iommu_free_pgtables(d);
-        if ( ret )
-            return ret;
+        for (i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
+            struct arch_iommu_context *ctx = &dom_iommu(d)->arch.contexts[i];
+
+            if (ctx->initialized) {
+                ret = iommu_free_pgtables(d, ctx);
+                if ( ret )
+                    return ret;
+
+                ctx->initialized = 0;
+            }
+        }
 
 #ifdef CONFIG_MEM_SHARING
     PROGRESS(shared):
