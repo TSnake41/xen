@@ -43,6 +43,7 @@
 #include "extern.h"
 #include "vtd.h"
 #include "../ats.h"
+#include "xen/spinlock.h"
 
 #define CONTIG_MASK DMA_PTE_CONTIG_MASK
 #include <asm/pt-contig-markers.h>
@@ -3284,11 +3285,43 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
     return rc;
 }
 
+int iommu_context_new(struct domain *d, u8 *ctx_no)
+{
+    struct arch_iommu_context *ctx;
+    struct domain_iommu *hd = dom_iommu(d);
+    u8 i;
+
+    spin_lock(&hd->arch.mapping_lock);
+
+    /* Get a free ctx_no. */
+    ASSERT(0xFF < IOMMU_MAX_CONTEXT); /* Sanity check (prevent underflow) */
+
+    for (i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
+        if (i == 0)
+            continue; /* Skip context 0 */
+
+        if (!hd->arch.contexts[i].initialized)
+            break; /* Found available context */
+    }
+
+    spin_unlock(&hd->arch.mapping_lock);
+
+    if (i >= IOMMU_MAX_CONTEXT)
+        return -ENOSPC;
+
+    *ctx_no = i;
+
+    ctx = &hd->arch.contexts[*ctx_no];
+
+    arch_iommu_context_init(ctx);
+}
+
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
     .page_sizes = PAGE_SIZE_4K,
     .init = intel_iommu_domain_init,
     .hwdom_init = intel_iommu_hwdom_init,
     .quarantine_init = intel_iommu_quarantine_init,
+    .context_new = iommu_context_new,
     .add_device = intel_iommu_add_device,
     .enable_device = intel_iommu_enable_device,
     .remove_device = intel_iommu_remove_device,

@@ -266,6 +266,7 @@ struct iommu_ops {
     int (*init)(struct domain *d);
     void (*hwdom_init)(struct domain *d);
     int (*quarantine_init)(device_t *dev, bool scratch_page);
+    int (*context_new)(struct domain *d, u8 *ctx_no);
     int (*add_device)(uint8_t devfn, device_t *dev, u8 ctx_no);
     int (*enable_device)(device_t *dev);
     int (*remove_device)(uint8_t devfn, device_t *dev);
@@ -440,6 +441,7 @@ extern struct spinlock iommu_pt_cleanup_lock;
 extern struct page_list_head iommu_pt_cleanup_list;
 
 bool arch_iommu_use_permitted(const struct domain *d);
+void arch_iommu_context_init(struct arch_iommu_context *ctx);
 
 #ifdef CONFIG_X86
 static inline int iommu_update_ire_from_msi(

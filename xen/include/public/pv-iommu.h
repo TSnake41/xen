@@ -22,38 +22,67 @@
 #define __XEN_PUBLIC_PV_IOMMU_H__
 
 #include "xen.h"
+#include "physdev.h"
 
-#define IOMMUOP_query_caps            1
-#define IOMMUOP_map_page              2
-#define IOMMUOP_unmap_page            3
+#define IOMMU_DEFAULT_CONTEXT (0)
+
+#define IOMMUOP_query                 1
+
+/**
+ * Create a new IOMMU context, the new context number will be written to ctx_no.
+ */
+#define IOMMUOP_create_context        2
+
+/**
+ * Destroy a IOMMU context.
+ * All associated devices will be bound back to default context.
+ *
+ * The default context can't be destroyed (0).
+ */
+#define IOMMUOP_destroy_context       3
+
+/**
+ * Bind a device to a IOMMU context.
+ */
+#define IOMMUOP_bind_device           4
+
+#define IOMMUOP_map_page              4
+#define IOMMUOP_unmap_page            5
 
 struct pv_iommu_op {
     uint16_t subop_id;
+    uint16_t ctx_no;
 
-#define IOMMU_page_order (0xf1 << 10)
-#define IOMMU_get_page_order(flags) ((flags & IOMMU_page_order) >> 10)
-#define IOMMU_QUERY_map_cap (1 << 0)
-#define IOMMU_QUERY_map_all_mfns (1 << 1)
+/* Check whether the IOMMU context exists. */
+#define IOMMU_QUERY_context_exists (1 << 0)
+
+/**
+ * Create a context that is derived from default. 
+ * The new context will be populated with 1:1 mappings covering the entire guest memory.
+ */
+#define IOMMU_CREATE_derive (1 << 0)
+
 #define IOMMU_OP_readable (1 << 0)
 #define IOMMU_OP_writeable (1 << 1)
-#define IOMMU_MAP_OP_no_ref_cnt (1 << 2)
     uint16_t flags;
     int32_t status;
 
     union {
-        struct {
-            uint64_t offset;
-        } query_caps;
+        struct {} query;
 
         struct {
-            uint64_t bfn;
             uint64_t gfn;
+            uint64_t dfn;
         } map_page;
 
         struct {
-            uint64_t bfn;
+            uint64_t dfn;
         } unmap_page;
-    } u;
+
+        struct {
+            struct physdev_pci_device dev;
+        } bind_device;
+    };
 };
 
 

@@ -184,21 +184,25 @@ void __hwdom_init arch_iommu_check_autotranslated_hwdom(struct domain *d)
         panic("PVH hardware domain iommu must be set in 'strict' mode\n");
 }
 
+void arch_iommu_context_init(struct arch_iommu_context *ctx)
+{
+    INIT_PAGE_LIST_HEAD(&ctx->pgtables.list);
+    spin_lock_init(&ctx->pgtables.lock);
+    ctx->initialized = 1;
+}
+
 int arch_iommu_domain_init(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
-    struct arch_iommu_context *default_ctx = iommu_default_context(&hd->arch);
 
     spin_lock_init(&hd->arch.mapping_lock);
-
-    INIT_PAGE_LIST_HEAD(&default_ctx->pgtables.list);
-    spin_lock_init(&default_ctx->pgtables.lock);
     INIT_LIST_HEAD(&hd->arch.identity_maps);
-
-    default_ctx->initialized = 1;
+    
+    arch_iommu_context_init(iommu_default_context(&hd->arch));
 
     return 0;
 }
+
 
 void arch_iommu_domain_destroy(struct domain *d)
 {

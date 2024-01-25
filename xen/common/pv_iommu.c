@@ -17,20 +17,26 @@
  * along with this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <xen/lib.h>
+#include <xen/iommu.h>
+#include <xen/sched.h>
+#include <xen/guest_access.h>
 #include <asm/p2m.h>
 #include <asm/event.h>
-#include <xen/guest_access.h>
 #include <public/pv-iommu.h>
+
+#define PVIOMMU_PREFIX "[PV-IOMMU]"
  
 #define ret_t long
 
-static int get_paged_frame(unsigned long gfn, mfn_t *mfn,
+#if 0
+static int get_paged_frame(gfn_t gfn, mfn_t *mfn,
                            struct page_info **page, int readonly,
                            struct domain *rd)
 {
     p2m_type_t p2mt;
 
-    *page = get_page_from_gfn(rd, gfn, &p2mt,
+    *page = get_page_from_gfn(rd, gfn.gfn, &p2mt,
                              (readonly) ? P2M_ALLOC : P2M_UNSHARE);
     if ( !(*page) )
     {
@@ -48,46 +54,95 @@ static int get_paged_frame(unsigned long gfn, mfn_t *mfn,
 
     return 0;
 }
+#endif
 
 int can_use_iommu_check(struct domain *d)
 {
-    if ( !iommu_enabled || (!is_hardware_domain(d) && !is_iommu_enabled(d)) )
+    if (!iommu_enabled) {
+        printk(PVIOMMU_PREFIX " IOMMU is not enabled");
         return 0;
+    }
 
-    if ( is_hardware_domain(d) && iommu_hwdom_passthrough )
+    if (!is_hardware_domain(d)) {
+        printk(PVIOMMU_PREFIX " Non-hardware domain");
         return 0;
+    }
 
-    if ( is_hardware_domain(d) && paging_mode_translate(d) )
+    if (!is_iommu_enabled(d)) {
+        printk(PVIOMMU_PREFIX " IOMMU disabled for this domain.");
         return 0;
+    }
+
+    if (paging_mode_translate(d) ) {
+        printk(PVIOMMU_PREFIX " translate paging mode is not supported");
+        return 0;
+    }
 
     return 1;
+}
+
+static void query_op(struct pv_iommu_op *op, struct domain_iommu *hd)
+{
+    if (op->flags | IOMMU_QUERY_context_exists) {
+        // TODO: Make and use a dedicated IOMMU subsystem function.
+        if (op->ctx_no >= IOMMU_MAX_CONTEXT) {
+            op->status = -EINVAL;
+            return;
+        }
+
+        op->status = hd->arch.contexts[op->ctx_no].initialized;
+    }
+}
+
+static void create_context_op(struct pv_iommu_op *op, struct domain *d)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    u8 ctx_no = 0;
+    int status = 0;
+
+    if (op->flags | IOMMU_CREATE_derive) {
+        printk(PVIOMMU_PREFIX " TODO: derive flag ignored");
+    }
+
+    if (!hd->platform_ops->context_new) {
+        // Non-supported
+        op->status = -ENOSYS;
+        return;
+    }
+
+    status = hd->platform_ops->context_new(d, &ctx_no);
+
+    if (status < 0) {
+        op->status = status;
+        return;
+    }
+
+    op->status = 0;
+    op->ctx_no = ctx_no;
 }
 
 void do_iommu_sub_op(struct pv_iommu_op *op)
 {
     struct domain *d = current->domain;
-    struct domain *rd = NULL;
-
-    /* Only order 0 pages supported */
-    if ( IOMMU_get_page_order(op->flags) != 0 )
-    {
-        op->status = -ENOSPC;
-        goto finish;
-    }
+    struct domain_iommu *hd = dom_iommu(d);
 
     switch ( op->subop_id )
     {
-        case IOMMUOP_query_caps:
+        case IOMMUOP_query:
         {
             op->flags = 0;
             op->status = 0;
-            if ( can_use_iommu_check(d) )
-            {
-                op->flags |= IOMMU_QUERY_map_cap | IOMMU_QUERY_map_all_mfns;
-                op->u.query_caps.offset = bfn_foreign_offset;
-            }
+            query_op(op, hd);
             break;
         }
+        case IOMMUOP_create_context:
+        {
+            op->flags = 0;
+            op->status = 0;
+            create_context_op(op, d);
+            break;
+        }
+        #if 0
         case IOMMUOP_map_page:
         {
             mfn_t mfn, tmp;
@@ -175,21 +230,15 @@ void do_iommu_sub_op(struct pv_iommu_op *op)
             op->status = 0;
             break;
         }
+        #endif
         default:
             op->status = -ENODEV;
             break;
     }
-
-finish:
-    if ( rd )
-        rcu_unlock_domain(rd);
-
-    return;
 }
 
- et_t do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
- 
-    return -ENOSYS;
+ret_t do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
+{
     ret_t ret = 0;
     int i;
     struct pv_iommu_op op;
