@@ -26,8 +26,6 @@
 #include <public/pv-iommu.h>
 
 #define PVIOMMU_PREFIX "[PV-IOMMU]"
- 
-#define ret_t long
 
 #if 0
 static int get_paged_frame(gfn_t gfn, mfn_t *mfn,
@@ -81,67 +79,33 @@ int can_use_iommu_check(struct domain *d)
     return 1;
 }
 
-static void query_op(struct pv_iommu_op *op, struct domain_iommu *hd)
-{
-    if (op->flags | IOMMU_QUERY_context_exists) {
-        // TODO: Make and use a dedicated IOMMU subsystem function.
-        if (op->ctx_no >= IOMMU_MAX_CONTEXT) {
-            op->status = -EINVAL;
-            return;
-        }
-
-        op->status = hd->arch.contexts[op->ctx_no].initialized;
-    }
-}
-
-static void create_context_op(struct pv_iommu_op *op, struct domain *d)
+static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
-    u8 ctx_no = 0;
+    u16 ctx_no = 0;
     int status = 0;
 
-    if (op->flags | IOMMU_CREATE_derive) {
-        printk(PVIOMMU_PREFIX " TODO: derive flag ignored");
-    }
+    if (!hd->platform_ops->alloc_context)
+        return -ENOSYS; /* Non-supported */
 
-    if (!hd->platform_ops->context_new) {
-        // Non-supported
-        op->status = -ENOSYS;
-        return;
-    }
+    status = hd->platform_ops->alloc_context(d, &ctx_no, op->flags);
 
-    status = hd->platform_ops->context_new(d, &ctx_no);
+    if (status < 0)
+        return status;
 
-    if (status < 0) {
-        op->status = status;
-        return;
-    }
-
-    op->status = 0;
     op->ctx_no = ctx_no;
+    return 0;
 }
 
-void do_iommu_sub_op(struct pv_iommu_op *op)
+long do_iommu_sub_op(struct pv_iommu_op *op)
 {
     struct domain *d = current->domain;
-    struct domain_iommu *hd = dom_iommu(d);
+    //struct domain_iommu *hd = dom_iommu(d);
 
     switch ( op->subop_id )
     {
-        case IOMMUOP_query:
-        {
-            op->flags = 0;
-            op->status = 0;
-            query_op(op, hd);
-            break;
-        }
-        case IOMMUOP_create_context:
-        {
-            op->flags = 0;
-            op->status = 0;
-            create_context_op(op, d);
-            break;
-        }
+        case IOMMUOP_alloc_context:
+            return alloc_context_op(op, d);
         #if 0
         case IOMMUOP_map_page:
         {
@@ -232,22 +196,21 @@ void do_iommu_sub_op(struct pv_iommu_op *op)
         }
         #endif
         default:
-            op->status = -ENODEV;
-            break;
+            return -ENODEV;
     }
 }
 
-ret_t do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
+long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
 {
-    ret_t ret = 0;
+    long ret = 0;
     int i;
     struct pv_iommu_op op;
     struct domain *d = current->domain;
 
-    if ( !is_hardware_domain(d) )
+    if ( can_use_iommu_check(d) )
         return -ENOSYS;
 
-    if ( (int)count < 0 )
+    if (count == 0)
         return -EINVAL;
 
     if ( count > 1 )
@@ -265,7 +228,7 @@ ret_t do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
             ret = -EFAULT;
             goto flush_pages;
         }
-        do_iommu_sub_op(&op);
+        ret = do_iommu_sub_op(&op);
         if ( unlikely(__copy_to_guest_offset(arg, i, &op, 1)) )
         {
             ret = -EFAULT;

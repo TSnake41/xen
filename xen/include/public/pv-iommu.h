@@ -26,25 +26,23 @@
 
 #define IOMMU_DEFAULT_CONTEXT (0)
 
-#define IOMMUOP_query                 1
-
 /**
- * Create a new IOMMU context, the new context number will be written to ctx_no.
+ * Allocate an IOMMU context, the new context handle will be written to ctx_no.
  */
-#define IOMMUOP_create_context        2
+#define IOMMUOP_alloc_context        2
 
 /**
  * Destroy a IOMMU context.
- * All associated devices will be bound back to default context.
+ * All devices attached to this context are reattached to default context.
  *
  * The default context can't be destroyed (0).
  */
-#define IOMMUOP_destroy_context       3
+#define IOMMUOP_free_context       3
 
 /**
- * Bind a device to a IOMMU context.
+ * Reattach the device to IOMMU context.
  */
-#define IOMMUOP_bind_device           4
+#define IOMMUOP_reattach_device           4
 
 #define IOMMUOP_map_page              4
 #define IOMMUOP_unmap_page            5
@@ -53,23 +51,17 @@ struct pv_iommu_op {
     uint16_t subop_id;
     uint16_t ctx_no;
 
-/* Check whether the IOMMU context exists. */
-#define IOMMU_QUERY_context_exists (1 << 0)
-
 /**
- * Create a context that is derived from default. 
+ * Create a context that is cloned from default. 
  * The new context will be populated with 1:1 mappings covering the entire guest memory.
  */
-#define IOMMU_CREATE_derive (1 << 0)
+#define IOMMU_CREATE_clone (1 << 0)
 
 #define IOMMU_OP_readable (1 << 0)
 #define IOMMU_OP_writeable (1 << 1)
-    uint16_t flags;
-    int32_t status;
+    uint32_t flags;
 
     union {
-        struct {} query;
-
         struct {
             uint64_t gfn;
             uint64_t dfn;
@@ -81,10 +73,9 @@ struct pv_iommu_op {
 
         struct {
             struct physdev_pci_device dev;
-        } bind_device;
+        } reattach_device;
     };
 };
-
 
 typedef struct pv_iommu_op pv_iommu_op_t;
 DEFINE_XEN_GUEST_HANDLE(pv_iommu_op_t);

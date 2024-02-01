@@ -168,10 +168,10 @@ enum
  */
 long __must_check iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                             unsigned long page_count, unsigned int flags,
-                            unsigned int *flush_flags, u8 ctx_no);
+                            unsigned int *flush_flags, u16 ctx_no);
 long __must_check iommu_unmap(struct domain *d, dfn_t dfn0,
                               unsigned long page_count, unsigned int flags,
-                              unsigned int *flush_flags, u8 ctx_no);
+                              unsigned int *flush_flags, u16 ctx_no);
 
 int __must_check iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
                                   unsigned long page_count,
@@ -180,7 +180,7 @@ int __must_check iommu_legacy_unmap(struct domain *d, dfn_t dfn,
                                     unsigned long page_count);
 
 int __must_check iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
-                                   unsigned int *flags, u8 ctx_no);
+                                   unsigned int *flags, u16 ctx_no);
 
 int __must_check iommu_iotlb_flush(struct domain *d, dfn_t dfn,
                                    unsigned long page_count,
@@ -266,8 +266,8 @@ struct iommu_ops {
     int (*init)(struct domain *d);
     void (*hwdom_init)(struct domain *d);
     int (*quarantine_init)(device_t *dev, bool scratch_page);
-    int (*context_new)(struct domain *d, u8 *ctx_no);
-    int (*add_device)(uint8_t devfn, device_t *dev, u8 ctx_no);
+    int (*alloc_context)(struct domain *d, u16 *ctx_no, u32 flags);
+    int (*add_device)(uint8_t devfn, device_t *dev, u16 ctx_no);
     int (*enable_device)(device_t *dev);
     int (*remove_device)(uint8_t devfn, device_t *dev);
     int (*assign_device)(struct domain *d, uint8_t devfn, device_t *dev,
@@ -287,14 +287,14 @@ struct iommu_ops {
     int __must_check (*map_page)(struct domain *d, dfn_t dfn, mfn_t mfn,
                                  unsigned int flags,
                                  unsigned int *flush_flags,
-                                 u8 ctx_no);
+                                 u16 ctx_no);
     int __must_check (*unmap_page)(struct domain *d, dfn_t dfn,
                                    unsigned int order,
                                    unsigned int *flush_flags,
-                                   u8 ctx_no);
+                                   u16 ctx_no);
     int __must_check (*lookup_page)(struct domain *d, dfn_t dfn, mfn_t *mfn,
                                     unsigned int *flags,
-                                    u8 ctx_no);
+                                    u16 ctx_no);
 
 #ifdef CONFIG_X86
     int (*enable_x2apic)(void);

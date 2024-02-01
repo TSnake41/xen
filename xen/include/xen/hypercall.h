@@ -58,8 +58,4 @@ common_vcpu_op(int cmd,
 
 void arch_get_xen_caps(xen_capabilities_info_t *info);
 
-extern long
-do_iommu_op(
-    XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count);
-
 #endif /* __XEN_HYPERCALL_H__ */

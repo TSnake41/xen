@@ -322,7 +322,7 @@ static unsigned int mapping_order(const struct domain_iommu *hd,
 
 long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                unsigned long page_count, unsigned int flags,
-               unsigned int *flush_flags, u8 ctx_no)
+               unsigned int *flush_flags, u16 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
@@ -396,7 +396,7 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
 
 long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
                  unsigned int flags, unsigned int *flush_flags,
-                 u8 ctx_no)
+                 u16 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
@@ -465,7 +465,7 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 }
 
 int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
-                      unsigned int *flags, u8 ctx_no)
+                      unsigned int *flags, u16 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
 

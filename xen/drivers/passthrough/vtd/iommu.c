@@ -1697,7 +1697,7 @@ static const struct acpi_drhd_unit *domain_context_unmap(
     struct domain *d, uint8_t devfn, struct pci_dev *pdev);
 
 static int domain_context_mapping(struct domain *domain, u8 devfn,
-                                  struct pci_dev *pdev, u8 ctx_no)
+                                  struct pci_dev *pdev, u16 ctx_no)
 {
     const struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
     const struct acpi_rmrr_unit *rmrr;
@@ -2093,7 +2093,7 @@ static void quarantine_teardown(struct pci_dev *pdev,
 
 static int __must_check cf_check intel_iommu_map_page(
     struct domain *d, dfn_t dfn, mfn_t mfn, unsigned int flags,
-    unsigned int *flush_flags, u8 ctx_no)
+    unsigned int *flush_flags, u16 ctx_no)
 {
     struct domain_iommu *hd = dom_iommu(d);
     struct arch_iommu_context *ctx;
@@ -2217,7 +2217,7 @@ static int __must_check cf_check intel_iommu_map_page(
 }
 
 static int __must_check cf_check intel_iommu_unmap_page(
-    struct domain *d, dfn_t dfn, unsigned int order, unsigned int *flush_flags, u8 ctx_no)
+    struct domain *d, dfn_t dfn, unsigned int order, unsigned int *flush_flags, u16 ctx_no)
 {
     struct domain_iommu *hd = dom_iommu(d);
     struct arch_iommu_context *ctx;
@@ -2304,7 +2304,7 @@ static int __must_check cf_check intel_iommu_unmap_page(
 }
 
 static int cf_check intel_iommu_lookup_page(
-    struct domain *d, dfn_t dfn, mfn_t *mfn, unsigned int *flags, u8 ctx_no)
+    struct domain *d, dfn_t dfn, mfn_t *mfn, unsigned int *flags, u16 ctx_no)
 {
     struct domain_iommu *hd = dom_iommu(d);
     uint64_t val;
@@ -2357,7 +2357,7 @@ static bool __init vtd_ept_page_compatible(const struct vtd_iommu *iommu)
             (cap_sps_1gb(vtd_cap) && iommu_superpages);
 }
 
-static int cf_check intel_iommu_add_device(u8 devfn, struct pci_dev *pdev, u8 ctx_no)
+static int cf_check intel_iommu_add_device(u8 devfn, struct pci_dev *pdev, u16 ctx_no)
 {
     struct acpi_rmrr_unit *rmrr;
     u16 bdf;
@@ -3285,11 +3285,11 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
     return rc;
 }
 
-int iommu_context_new(struct domain *d, u8 *ctx_no)
+int iommu_alloc_context(struct domain *d, u16 *ctx_no, u32 flags)
 {
     struct arch_iommu_context *ctx;
     struct domain_iommu *hd = dom_iommu(d);
-    u8 i;
+    u16 i;
 
     spin_lock(&hd->arch.mapping_lock);
 
@@ -3321,7 +3321,7 @@ static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
     .init = intel_iommu_domain_init,
     .hwdom_init = intel_iommu_hwdom_init,
     .quarantine_init = intel_iommu_quarantine_init,
-    .context_new = iommu_context_new,
+    .alloc_context = iommu_alloc_context,
     .add_device = intel_iommu_add_device,
     .enable_device = intel_iommu_enable_device,
     .remove_device = intel_iommu_remove_device,
