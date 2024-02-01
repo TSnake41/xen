@@ -12,6 +12,9 @@
  * this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <xen/bitmap.h>
+#include <xen/list.h>
+#include <xen/mm.h>
 #include <xen/cpu.h>
 #include <xen/sched.h>
 #include <xen/iocap.h>
@@ -186,23 +189,47 @@ void __hwdom_init arch_iommu_check_autotranslated_hwdom(struct domain *d)
 
 void arch_iommu_context_init(struct arch_iommu_context *ctx)
 {
-    INIT_PAGE_LIST_HEAD(&ctx->pgtables.list);
-    spin_lock_init(&ctx->pgtables.lock);
-    ctx->initialized = 1;
+    INIT_PAGE_LIST_HEAD(&ctx->pgtables);
+    spin_lock_init(&ctx->lock);
+
+    INIT_LIST_HEAD(&ctx->devices);
+}
+
+void arch_iommu_context_destroy(struct domain *d, struct arch_iommu_context *ctx, bool dont_reattach)
+{
+    /* TODO */
+    /* page_list_empty(&ctx->pgtables); */
 }
 
 int arch_iommu_domain_init(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
+    uint16_t other_context_count;
 
-    spin_lock_init(&hd->arch.mapping_lock);
+    spin_lock_init(&hd->arch.lock);
     INIT_LIST_HEAD(&hd->arch.identity_maps);
     
-    arch_iommu_context_init(iommu_default_context(&hd->arch));
+    if (is_hardware_domain(d)) {
+        BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
+        printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
+        hd->arch.other_contexts.count = iommu_hwdom_nb_ctx - 1;
+    } else
+        hd->arch.other_contexts.count = 0;
+
+    arch_iommu_context_init(iommu_default_context(hd));
+
+    other_context_count = hd->arch.other_contexts.count;
+    if (other_context_count > 0) {
+        /* Initialize context lit */
+        hd->arch.other_contexts.bitmap = xzalloc_array(unsigned long, BITS_TO_LONGS(other_context_count));
+        hd->arch.other_contexts.map = xzalloc_array(struct arch_iommu_context, other_context_count);
+    } else {
+        hd->arch.other_contexts.bitmap = NULL;
+        hd->arch.other_contexts.map = NULL;
+    }
 
     return 0;
 }
-
 
 void arch_iommu_domain_destroy(struct domain *d)
 {
@@ -211,13 +238,14 @@ void arch_iommu_domain_destroy(struct domain *d)
      * domain is destroyed. Note that arch_iommu_domain_destroy() is
      * called unconditionally, so pgtables may be uninitialized.
      */
-    ASSERT(!dom_iommu(d)->platform_ops);
+    struct domain_iommu *hd = dom_iommu(d);
 
-    for (unsigned int i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
-        struct arch_iommu_context *ctx = &dom_iommu(d)->arch.contexts[i];
+    ASSERT(!hd->platform_ops);
 
-        if (ctx->initialized)
-            ASSERT(page_list_empty(&ctx->pgtables.list));
+    for (unsigned int i = 0; i < (1 + hd->arch.other_contexts.count); ++i) {
+        if (iommu_check_context(hd, i)) {
+            ASSERT(page_list_empty(&iommu_get_context(hd, i)->pgtables));
+        }
     }
 
 }
@@ -242,7 +270,7 @@ int iommu_identity_mapping(struct domain *d, p2m_access_t p2ma,
     ASSERT(base < end);
 
     /*
-     * No need to acquire hd->arch.mapping_lock: Both insertion and removal
+     * No need to acquire hd->arch.lock: Both insertion and removal
      * get done while holding pcidevs_lock.
      */
     list_for_each_entry( map, &hd->arch.identity_maps, list )
@@ -633,7 +661,7 @@ int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
         return 0;
 
     /* After this barrier, no new IOMMU mappings can be inserted. */
-    spin_barrier(&hd->arch.mapping_lock);
+    spin_barrier(&hd->arch.lock);
 
     /*
      * Pages will be moved to the free list below. So we want to
@@ -641,7 +669,7 @@ int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
      */
     iommu_vcall(hd->platform_ops, clear_root_pgtable, d, ctx);
 
-    while ( (pg = page_list_remove_head(&ctx->pgtables.list)) )
+    while ( (pg = page_list_remove_head(&ctx->pgtables)) )
     {
         free_domheap_page(pg);
 
@@ -698,9 +726,9 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
 
     unmap_domain_page(p);
 
-    spin_lock(&ctx->pgtables.lock);
-    page_list_add(pg, &ctx->pgtables.list);
-    spin_unlock(&ctx->pgtables.lock);
+    spin_lock(&ctx->lock);
+    page_list_add(pg, &ctx->pgtables);
+    spin_unlock(&ctx->lock);
 
     return pg;
 }
@@ -743,9 +771,9 @@ void iommu_queue_free_pgtable(struct arch_iommu_context *ctx, struct page_info *
 {
     unsigned int cpu = smp_processor_id();
 
-    spin_lock(&ctx->pgtables.lock);
-    page_list_del(pg, &ctx->pgtables.list);
-    spin_unlock(&ctx->pgtables.lock);
+    spin_lock(&ctx->lock);
+    page_list_del(pg, &ctx->pgtables);
+    spin_unlock(&ctx->lock);
 
     page_list_add_tail(pg, &per_cpu(free_pgt_list, cpu));
 

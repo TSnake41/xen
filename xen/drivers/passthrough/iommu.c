@@ -57,6 +57,8 @@ int8_t __hwdom_initdata iommu_hwdom_reserved = -1;
 bool __read_mostly iommu_hap_pt_share = true;
 #endif
 
+uint16_t __read_mostly iommu_hwdom_nb_ctx = 8;
+
 bool __read_mostly iommu_debug;
 
 DEFINE_PER_CPU(bool, iommu_dont_flush_iotlb);
@@ -152,6 +154,7 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
     int rc = 0;
 
     do {
+        long long nb_ctx;
         int val;
 
         ss = strchr(s, ',');
@@ -168,7 +171,12 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
             iommu_hwdom_reserved = val;
         else if ( !cmdline_strcmp(s, "none") )
             iommu_hwdom_none = true;
-        else
+        else if ( !parse_signed_integer("nb-ctx", s, ss, &nb_ctx) ) {
+            if (nb_ctx > 0 && nb_ctx < UINT16_MAX)
+                iommu_hwdom_nb_ctx = nb_ctx;
+            else 
+                printk(XENLOG_INFO "'nb-ctx=%lld' value out of range!\n", nb_ctx);
+        } else
             rc = -EINVAL;
 
         s = ss + 1;

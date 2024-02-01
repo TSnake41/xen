@@ -2,6 +2,7 @@
 #ifndef __ARCH_X86_IOMMU_H__
 #define __ARCH_X86_IOMMU_H__
 
+#include "xen/bitmap.h"
 #include <xen/errno.h>
 #include <xen/list.h>
 #include <xen/mem_access.h>
@@ -32,16 +33,11 @@ typedef uint64_t daddr_t;
 #define dfn_to_daddr(dfn) __dfn_to_daddr(dfn_x(dfn))
 #define daddr_to_dfn(daddr) _dfn(__daddr_to_dfn(daddr))
 
-#define IOMMU_MAX_CONTEXT 8
-
 struct arch_iommu_context
 {
-    bool initialized; /* context initialization status */
-
-    struct {
-        struct page_list_head list;
-        spinlock_t lock;
-    } pgtables;
+    spinlock_t lock;
+    struct page_list_head pgtables;
+    struct list_head devices;
 
     union {
         /* Intel VT-d */
@@ -55,13 +51,23 @@ struct arch_iommu_context
     };
 };
 
+struct arch_iommu_context_list {
+    uint16_t count; /* Context count excluding default context */
+    
+    /* if count > 0 */
+
+    uint64_t *bitmap; /* bitmap of context allocation */
+    struct arch_iommu_context *map; /* Map of contexts */
+};
+
 struct arch_iommu
 {
-    spinlock_t mapping_lock; /* io page table lock */
+    /* each context has a lock */
+    struct arch_iommu_context default_ctx;
+    struct arch_iommu_context_list other_contexts;
 
+    spinlock_t lock; /* iommu lock */
     struct list_head identity_maps;
-    
-    struct arch_iommu_context contexts[IOMMU_MAX_CONTEXT];
 
     union {
         /* Intel VT-d */
@@ -77,7 +83,28 @@ struct arch_iommu
     };
 };
 
-#define iommu_default_context(hd) (&(hd)->contexts[0])
+#define iommu_default_context(hd) (&(hd)->arch.default_ctx)
+#define iommu_get_context(hd, ctx_no) (arch_iommu_get_context(&(hd)->arch, ctx_no))
+#define iommu_check_context(hd, ctx_no) (arch_iommu_check_context(&(hd)->arch, ctx_no))
+
+static inline bool arch_iommu_check_context(const struct arch_iommu *io, u16 ctx_no) {
+    if (ctx_no == 0)
+        return 1; /* Default context always exist. */
+    
+    if ((ctx_no - 1) >= io->other_contexts.count)
+        return 0; /* out of bounds */
+
+    return test_bit(ctx_no - 1, io->other_contexts.bitmap);
+}
+
+static inline struct arch_iommu_context *arch_iommu_get_context(struct arch_iommu *io, u16 ctx_no) {
+    ASSERT(arch_iommu_check_context(io, ctx_no));
+
+    if (ctx_no == 0)
+        return &io->default_ctx;
+    else
+        return &io->other_contexts.map[ctx_no - 1];
+}
 
 extern struct iommu_ops iommu_ops;
 

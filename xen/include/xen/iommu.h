@@ -114,6 +114,7 @@ extern bool amd_iommu_perdev_intremap;
 
 extern bool iommu_hwdom_strict, iommu_hwdom_passthrough, iommu_hwdom_inclusive;
 extern int8_t iommu_hwdom_reserved;
+extern uint16_t iommu_hwdom_nb_ctx;
 
 extern unsigned int iommu_dev_iotlb_timeout;
 

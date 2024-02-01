@@ -61,6 +61,7 @@
 #include <asm/nmi.h>
 #include <asm/mce.h>
 #include <asm/amd.h>
+#include <asm/iommu.h>
 #include <xen/numa.h>
 #include <xen/iommu.h>
 #ifdef CONFIG_COMPAT
@@ -2331,7 +2332,6 @@ static int relinquish_memory(
 int domain_relinquish_resources(struct domain *d)
 {
     int ret;
-    unsigned int i;
     struct vcpu *v;
 
     BUG_ON(!cpumask_empty(d->dirty_cpumask));
@@ -2357,7 +2357,8 @@ int domain_relinquish_resources(struct domain *d)
         d->arch.rel_priv = PROG_ ## x; /* Fallthrough */ case PROG_ ## x
 
         enum {
-            PROG_iommu_pagetables = 1,
+            PROG_iommu = 0,
+            PROG_pci = 1,
             PROG_shared,
             PROG_paging,
             PROG_vcpu_pagetables,
@@ -2368,24 +2369,15 @@ int domain_relinquish_resources(struct domain *d)
             PROG_done,
         };
 
-    case 0:
+    case PROG_iommu:
+    
+        arch_iommu_domain_destroy(d);
+
+    PROGRESS(pci):
+
         ret = pci_release_devices(d);
         if ( ret )
             return ret;
-
-    PROGRESS(iommu_pagetables):
-
-        for (i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
-            struct arch_iommu_context *ctx = &dom_iommu(d)->arch.contexts[i];
-
-            if (ctx->initialized) {
-                ret = iommu_free_pgtables(d, ctx);
-                if ( ret )
-                    return ret;
-
-                ctx->initialized = 0;
-            }
-        }
 
 #ifdef CONFIG_MEM_SHARING
     PROGRESS(shared):

@@ -37,12 +37,14 @@
 #include <asm/hvm/vmx/vmx.h>
 #include <asm/p2m.h>
 #include <mach_apic.h>
+#include "asm/bitops.h"
 #include "asm/iommu.h"
 #include "iommu.h"
 #include "dmar.h"
 #include "extern.h"
 #include "vtd.h"
 #include "../ats.h"
+#include "xen/lib.h"
 #include "xen/spinlock.h"
 
 #define CONTIG_MASK DMA_PTE_CONTIG_MASK
@@ -53,7 +55,7 @@
 #define DEVICE_DOMID(d, pdev) ((d) != dom_io ? (d)->domain_id \
                                              : (pdev)->arch.pseudo_domid)
 #define DEVICE_PGTABLE(d, pdev, ctx) ((d) != dom_io \
-                                 ? dom_iommu(d)->arch.contexts[ctx].vtd.pgd_maddr \
+                                 ? (iommu_get_context(dom_iommu(d), ctx)->vtd.pgd_maddr) \
                                  : (pdev)->arch.vtd.pgd_maddr)
 
 bool __read_mostly iommu_igfx = true;
@@ -326,7 +328,7 @@ static uint64_t addr_to_dma_page_maddr(struct domain *domain,
     u64 pte_maddr = 0;
 
     addr &= (((u64)1) << addr_width) - 1;
-    ASSERT(spin_is_locked(&hd->arch.mapping_lock));
+    ASSERT(spin_is_locked(&hd->arch.lock));
     ASSERT(target || !alloc);
 
     if ( !ctx->vtd.pgd_maddr )
@@ -437,7 +439,7 @@ static paddr_t domain_pgd_maddr(struct domain *d, paddr_t pgd_maddr,
     struct domain_iommu *hd = dom_iommu(d);
     unsigned int agaw;
 
-    ASSERT(spin_is_locked(&hd->arch.mapping_lock));
+    ASSERT(spin_is_locked(&hd->arch.lock));
 
     if ( pgd_maddr )
         /* nothing */;
@@ -449,7 +451,7 @@ static paddr_t domain_pgd_maddr(struct domain *d, paddr_t pgd_maddr,
     }
     else
     {
-        struct arch_iommu_context *ctx = iommu_default_context(&hd->arch);
+        struct arch_iommu_context *ctx = iommu_default_context(hd);
 
         if ( !ctx->vtd.pgd_maddr )
         {
@@ -1534,12 +1536,12 @@ int domain_context_mapping_one(
     {
         paddr_t root;
 
-        spin_lock(&hd->arch.mapping_lock);
+        spin_lock(&hd->arch.lock);
 
         root = domain_pgd_maddr(domain, pgd_maddr, iommu->nr_pt_levels);
         if ( !root )
         {
-            spin_unlock(&hd->arch.mapping_lock);
+            spin_unlock(&hd->arch.lock);
             spin_unlock(&iommu->lock);
             unmap_vtd_domain_page(context_entries);
             if ( prev_dom )
@@ -1553,7 +1555,7 @@ int domain_context_mapping_one(
         else
             context_set_translation_type(lctxt, CONTEXT_TT_MULTI_LEVEL);
 
-        spin_unlock(&hd->arch.mapping_lock);
+        spin_unlock(&hd->arch.lock);
     }
 
     rc = context_set_domain_id(&lctxt, domid, iommu);
@@ -2044,15 +2046,15 @@ static void cf_check iommu_clear_root_pgtable(struct domain *d, struct arch_iomm
 {
     struct domain_iommu *hd = dom_iommu(d);
 
-    spin_lock(&hd->arch.mapping_lock);
+    spin_lock(&hd->arch.lock);
     ctx->vtd.pgd_maddr = 0;
-    spin_unlock(&hd->arch.mapping_lock);
+    spin_unlock(&hd->arch.lock);
 }
 
 static void cf_check iommu_domain_teardown(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
-    struct arch_iommu_context *ctx = iommu_default_context(&hd->arch);
+    struct arch_iommu_context *ctx = iommu_default_context(hd);
     const struct acpi_drhd_unit *drhd;
 
     if ( list_empty(&acpi_drhd_units) )
@@ -2079,10 +2081,10 @@ static void quarantine_teardown(struct pci_dev *pdev,
     if ( !pdev->arch.vtd.pgd_maddr )
         return;
 
-    ctx = iommu_default_context(&hd->arch);
+    ctx = iommu_default_context(hd);
 
-    ASSERT(page_list_empty(&ctx->pgtables.list));
-    page_list_move(&ctx->pgtables.list, &pdev->arch.pgtables_list);
+    ASSERT(page_list_empty(&ctx->pgtables));
+    page_list_move(&ctx->pgtables, &pdev->arch.pgtables_list);
     while ( iommu_free_pgtables(dom_io, ctx) == -ERESTART )
         /* nothing */;
     pdev->arch.vtd.pgd_maddr = 0;
@@ -2113,22 +2115,22 @@ static int __must_check cf_check intel_iommu_map_page(
     if ( iommu_hwdom_passthrough && is_hardware_domain(d) && !ctx_no )
         return 0;
 
-    if (ctx_no >= IOMMU_MAX_CONTEXT || !hd->arch.contexts[ctx_no].initialized)
+    if (!iommu_check_context(hd, ctx_no))
         return -ENOENT;
 
-    ctx = &hd->arch.contexts[ctx_no];
+    ctx = iommu_get_context(hd, ctx_no);
 
-    spin_lock(&hd->arch.mapping_lock);
+    spin_lock(&hd->arch.lock);
 
     /*
      * IOMMU mapping request can be safely ignored when the domain is dying.
      *
-     * hd->arch.mapping_lock guarantees that d->is_dying will be observed
+     * hd->arch.lock guarantees that d->is_dying will be observed
      * before any page tables are freed (see iommu_free_pgtables())
      */
     if ( d->is_dying )
     {
-        spin_unlock(&hd->arch.mapping_lock);
+        spin_unlock(&hd->arch.lock);
         return 0;
     }
 
@@ -2136,7 +2138,7 @@ static int __must_check cf_check intel_iommu_map_page(
                                       true);
     if ( pg_maddr < PAGE_SIZE )
     {
-        spin_unlock(&hd->arch.mapping_lock);
+        spin_unlock(&hd->arch.lock);
         return -ENOMEM;
     }
 
@@ -2157,7 +2159,7 @@ static int __must_check cf_check intel_iommu_map_page(
 
     if ( !((old.val ^ new.val) & ~DMA_PTE_CONTIG_MASK) )
     {
-        spin_unlock(&hd->arch.mapping_lock);
+        spin_unlock(&hd->arch.lock);
         unmap_vtd_domain_page(page);
         return 0;
     }
@@ -2200,7 +2202,7 @@ static int __must_check cf_check intel_iommu_map_page(
         perfc_incr(iommu_pt_coalesces);
     }
 
-    spin_unlock(&hd->arch.mapping_lock);
+    spin_unlock(&hd->arch.lock);
     unmap_vtd_domain_page(page);
 
     *flush_flags |= IOMMU_FLUSHF_added;
@@ -2226,10 +2228,10 @@ static int __must_check cf_check intel_iommu_unmap_page(
     uint64_t pg_maddr;
     unsigned int level = (order / LEVEL_STRIDE) + 1;
 
-    if (ctx_no > IOMMU_MAX_CONTEXT || !hd->arch.contexts[ctx_no].initialized)
+    if (!iommu_check_context(hd, ctx_no))
         return -ENOENT;
 
-    ctx = &hd->arch.contexts[ctx_no];
+    ctx = iommu_get_context(hd, ctx_no);
 
     /*
      * While really we could unmap at any granularity, for now we assume unmaps
@@ -2245,12 +2247,12 @@ static int __must_check cf_check intel_iommu_unmap_page(
     if ( iommu_hwdom_passthrough && is_hardware_domain(d) )
         return 0;
 
-    spin_lock(&hd->arch.mapping_lock);
+    spin_lock(&hd->arch.lock);
     /* get target level pte */
     pg_maddr = addr_to_dma_page_maddr(d, ctx, addr, level, flush_flags, false);
     if ( pg_maddr < PAGE_SIZE )
     {
-        spin_unlock(&hd->arch.mapping_lock);
+        spin_unlock(&hd->arch.lock);
         return pg_maddr ? -ENOMEM : 0;
     }
 
@@ -2259,7 +2261,7 @@ static int __must_check cf_check intel_iommu_unmap_page(
 
     if ( !dma_pte_present(*pte) )
     {
-        spin_unlock(&hd->arch.mapping_lock);
+        spin_unlock(&hd->arch.lock);
         unmap_vtd_domain_page(page);
         return 0;
     }
@@ -2290,7 +2292,7 @@ static int __must_check cf_check intel_iommu_unmap_page(
         perfc_incr(iommu_pt_coalesces);
     }
 
-    spin_unlock(&hd->arch.mapping_lock);
+    spin_unlock(&hd->arch.lock);
 
     unmap_vtd_domain_page(page);
 
@@ -2318,16 +2320,16 @@ static int cf_check intel_iommu_lookup_page(
          (iommu_hwdom_passthrough && is_hardware_domain(d)) )
         return -EOPNOTSUPP;
 
-    if (ctx_no >= IOMMU_MAX_CONTEXT || !hd->arch.contexts[ctx_no].initialized)
+    if (iommu_check_context(hd, ctx_no))
         return -ENOENT;
 
-    ctx = &hd->arch.contexts[ctx_no];
+    ctx = iommu_get_context(hd, ctx_no);
 
-    spin_lock(&hd->arch.mapping_lock);
+    spin_lock(&hd->arch.lock);
 
     val = addr_to_dma_page_maddr(d, ctx, dfn_to_daddr(dfn), 0, NULL, false);
 
-    spin_unlock(&hd->arch.mapping_lock);
+    spin_unlock(&hd->arch.lock);
 
     if ( val < PAGE_SIZE )
         return -ENOENT;
@@ -2365,7 +2367,7 @@ static int cf_check intel_iommu_add_device(u8 devfn, struct pci_dev *pdev, u16 c
 
     struct domain_iommu *hd = dom_iommu(pdev->domain);
 
-    if (hd && (ctx_no >= IOMMU_MAX_CONTEXT || !hd->arch.contexts[ctx_no].initialized))
+    if (hd && iommu_check_context(hd, ctx_no))
         return -ENOENT;
 
     ASSERT(pcidevs_locked());
@@ -3136,17 +3138,19 @@ static void vtd_dump_page_table_level(paddr_t pt_maddr, int level, paddr_t gpa,
 
 static void cf_check vtd_dump_page_tables(struct domain *d)
 {
-    const struct domain_iommu *hd = dom_iommu(d);
+    struct domain_iommu *hd = dom_iommu(d);
     unsigned int i;
 
     printk(VTDPREFIX" %pd table has %d levels\n", d,
            agaw_to_level(hd->arch.vtd.agaw));
 
-    for (i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
-        const struct arch_iommu_context *ctx = &hd->arch.contexts[i];
+    for (i = 0; i < (1 + hd->arch.other_contexts.count); ++i) {
+        bool allocated = iommu_check_context(hd, i);
+        printk(VTDPREFIX " %pd context %d: %s\n", d, i,
+               allocated ? "allocated" : "non-allocated");
 
-        printk(VTDPREFIX " %pd context %d: %s\n", d, i, ctx->initialized ? "initialized" : "unused");
-        if (ctx->initialized || !i) {
+        if (allocated) {
+            const struct arch_iommu_context *ctx = iommu_get_context(hd, i);
             vtd_dump_page_table_level(ctx->vtd.pgd_maddr,
                                       agaw_to_level(hd->arch.vtd.agaw), 0, 0);
         }
@@ -3157,7 +3161,7 @@ static int fill_qpt(struct dma_pte *this, unsigned int level,
                     struct page_info *pgs[6])
 {
     struct domain_iommu *hd = dom_iommu(dom_io);
-    struct arch_iommu_context *ctx = iommu_default_context(&hd->arch);
+    struct arch_iommu_context *ctx = iommu_default_context(hd);
     unsigned int i;
     int rc = 0;
 
@@ -3217,11 +3221,11 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
     bool rmrr_found = false;
     int rc;
 
-    struct arch_iommu_context *ctx = iommu_default_context(&hd->arch);
+    struct arch_iommu_context *ctx = iommu_default_context(hd);
 
     ASSERT(pcidevs_locked());
     ASSERT(!ctx->vtd.pgd_maddr);
-    ASSERT(page_list_empty(&ctx->pgtables.list));
+    ASSERT(page_list_empty(&ctx->pgtables));
 
     if ( pdev->arch.vtd.pgd_maddr )
     {
@@ -3277,7 +3281,7 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
         pdev->arch.leaf_mfn = page_to_mfn(pgs[0]);
     }
 
-    page_list_move(&pdev->arch.pgtables_list, &ctx->pgtables.list);
+    page_list_move(&pdev->arch.pgtables_list, &ctx->pgtables);
 
     if ( rc || (!scratch_page && !rmrr_found) )
         quarantine_teardown(pdev, drhd);
@@ -3287,33 +3291,27 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
 
 int iommu_alloc_context(struct domain *d, u16 *ctx_no, u32 flags)
 {
-    struct arch_iommu_context *ctx;
     struct domain_iommu *hd = dom_iommu(d);
-    u16 i;
+    unsigned int i;
 
-    spin_lock(&hd->arch.mapping_lock);
+    spin_lock(&hd->arch.lock);
 
-    /* Get a free ctx_no. */
-    ASSERT(0xFF < IOMMU_MAX_CONTEXT); /* Sanity check (prevent underflow) */
+    /* TODO: Move it to arch_iommu_* ; use TSL instead */
+    i = find_first_zero_bit(hd->arch.other_contexts.bitmap, hd->arch.other_contexts.count);
 
-    for (i = 0; i < IOMMU_MAX_CONTEXT; ++i) {
-        if (i == 0)
-            continue; /* Skip context 0 */
+    if (i < hd->arch.other_contexts.count)
+        __set_bit(i, hd->arch.other_contexts.bitmap);
 
-        if (!hd->arch.contexts[i].initialized)
-            break; /* Found available context */
-    }
+    spin_unlock(&hd->arch.lock);
 
-    spin_unlock(&hd->arch.mapping_lock);
-
-    if (i >= IOMMU_MAX_CONTEXT)
+    if (i >= hd->arch.other_contexts.count)
         return -ENOSPC;
 
     *ctx_no = i;
 
-    ctx = &hd->arch.contexts[*ctx_no];
+    arch_iommu_context_init(iommu_get_context(hd, *ctx_no));
 
-    arch_iommu_context_init(ctx);
+    return 0;
 }
 
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
