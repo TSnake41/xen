@@ -1710,6 +1710,8 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
     uint16_t seg = pdev->seg, bdf;
     uint8_t bus = pdev->bus, secbus;
 
+    printk("domain_context_mapping() %hud %ddevfn %pdev %huctx\n", domain->domain_id, devfn, pdev, ctx_no);
+
     /*
      * Generally we assume only devices from one node to get assigned to a
      * given guest.  But even if not, by replacing the prior value here we
@@ -3289,7 +3291,7 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
     return rc;
 }
 
-int iommu_alloc_context(struct domain *d, u16 *ctx_no, u32 flags)
+static int iommu_alloc_context(struct domain *d, u16 *ctx_no, u32 flags)
 {
     struct domain_iommu *hd = dom_iommu(d);
     unsigned int i;
@@ -3314,12 +3316,40 @@ int iommu_alloc_context(struct domain *d, u16 *ctx_no, u32 flags)
     return 0;
 }
 
+static int intel_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_dev *pdev, u16 ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    if (!iommu_check_context(hd, ctx_no))
+        return -ENOENT;
+
+    if (!pdev)
+        return -EINVAL;
+
+    spin_lock(&hd->arch.lock);
+
+    ret = domain_context_unmap(d, devfn, pdev);
+    if (!ret)
+        return ret;
+
+    ret = domain_context_mapping(d, devfn, pdev, ctx_no);
+    if (!ret) {
+        
+
+        return ret;
+    }
+
+    spin_unlock(&hd->arch.lock);
+}
+
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
     .page_sizes = PAGE_SIZE_4K,
     .init = intel_iommu_domain_init,
     .hwdom_init = intel_iommu_hwdom_init,
     .quarantine_init = intel_iommu_quarantine_init,
     .alloc_context = iommu_alloc_context,
+    .reattach_context = intel_iommu_reattach_context,
     .add_device = intel_iommu_add_device,
     .enable_device = intel_iommu_enable_device,
     .remove_device = intel_iommu_remove_device,

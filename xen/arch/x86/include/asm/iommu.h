@@ -33,6 +33,12 @@ typedef uint64_t daddr_t;
 #define dfn_to_daddr(dfn) __dfn_to_daddr(dfn_x(dfn))
 #define daddr_to_dfn(daddr) _dfn(__daddr_to_dfn(daddr))
 
+// Add context_list in pci_dev instead ?
+struct arch_iommu_context_device {
+    struct list_head list;
+    struct pci_dev *pdev;
+};
+
 struct arch_iommu_context
 {
     spinlock_t lock;

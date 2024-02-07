@@ -268,6 +268,7 @@ struct iommu_ops {
     void (*hwdom_init)(struct domain *d);
     int (*quarantine_init)(device_t *dev, bool scratch_page);
     int (*alloc_context)(struct domain *d, u16 *ctx_no, u32 flags);
+    int (*reattach_context)(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no);
     int (*add_device)(uint8_t devfn, device_t *dev, u16 ctx_no);
     int (*enable_device)(device_t *dev);
     int (*remove_device)(uint8_t devfn, device_t *dev);

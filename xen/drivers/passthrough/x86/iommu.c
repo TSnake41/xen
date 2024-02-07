@@ -12,6 +12,10 @@
  * this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "xen/lib.h"
+#include "xen/pci.h"
+#include "xen/spinlock.h"
+#include <asm-generic/errno-base.h>
 #include <xen/bitmap.h>
 #include <xen/list.h>
 #include <xen/mm.h>
@@ -247,7 +251,74 @@ void arch_iommu_domain_destroy(struct domain *d)
             ASSERT(page_list_empty(&iommu_get_context(hd, i)->pgtables));
         }
     }
+}
 
+bool arch_iommu_context_has_device(struct arch_iommu_context *ctx, const struct pci_dev *pdev)
+{
+    struct arch_iommu_context_device *ctx_dev;
+
+    ASSERT(pdev);
+
+    list_for_each_entry(ctx_dev, &ctx->devices, list) {
+        if (pdev == ctx_dev->pdev) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int arch_iommu_get_device_context(struct domain *d, struct pci_dev *pdev, u16 *ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+
+    for (unsigned int i = 0; i < (1 + hd->arch.other_contexts.count); ++i) {
+        if (iommu_check_context(hd, i)
+            && arch_iommu_context_has_device(iommu_get_context(hd, i), pdev)) {
+                *ctx_no = i;
+                return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
+int arch_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_dev *pdev, u16 ctx_no)
+{
+    int ret;
+    u16 prev_ctx_no;
+    struct arch_iommu_context_device *ctx_dev;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    /* The device must be bound to a context. */
+    ASSERT(!arch_iommu_get_device_context(d, pdev, &prev_ctx_no));
+
+    if (ctx_no == prev_ctx_no) {
+        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu is no-op", &pdev->sbdf, ctx_no);
+        return 0;
+    }
+
+    if (!iommu_check_context(hd, ctx_no)) {
+        return -ENOENT;
+    }
+
+    /* Remove device from previous context, and add it to new one. */
+    spin_lock(&hd->arch.lock);
+
+    struct arch_iommu_context *prev_ctx = iommu_get_context(hd, prev_ctx_no);
+    struct arch_iommu_context *next_ctx = iommu_get_context(hd, ctx_no);
+    
+    list_for_each_entry(ctx_dev, &prev_ctx->devices, list) {
+        if (ctx_dev->pdev == pdev) {
+            list_del(&ctx_dev->list);
+            list_add(&ctx_dev->list, &next_ctx->devices);
+            break;
+        }
+    }
+
+    iommu_call(d->iommu, reattach_context, d, devfn, pdev, ctx_no);
+
+    spin_unlock(&hd->arch.lock);
 }
 
 struct identity_map {
