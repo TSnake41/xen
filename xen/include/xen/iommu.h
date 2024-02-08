@@ -258,18 +258,17 @@ struct page_info;
  */
 typedef int iommu_grdm_t(xen_pfn_t start, xen_ulong_t nr, u32 id, void *ctxt);
 
-#ifdef CONFIG_X86
-struct arch_iommu_context;
-#endif
+struct iommu_context;
 
 struct iommu_ops {
     unsigned long page_sizes;
     int (*init)(struct domain *d);
     void (*hwdom_init)(struct domain *d);
     int (*quarantine_init)(device_t *dev, bool scratch_page);
-    int (*alloc_context)(struct domain *d, u16 *ctx_no, u32 flags);
-    int (*reattach_context)(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no);
-    int (*add_device)(uint8_t devfn, device_t *dev, u16 ctx_no);
+    int (*context_init)(struct domain *d, struct iommu_context *ctx, u32 flags);
+    int (*context_teardown)(struct domain *d, struct iommu_context *ctx, u32 flags);
+    int (*reattach_context)(struct domain *d, u8 devfn, device_t *dev, struct iommu_context *ctx);
+    int (*add_device)(uint8_t devfn, device_t *dev, struct iommu_context *ctx);
     int (*enable_device)(device_t *dev);
     int (*remove_device)(uint8_t devfn, device_t *dev);
     int (*assign_device)(struct domain *d, uint8_t devfn, device_t *dev,
@@ -289,14 +288,14 @@ struct iommu_ops {
     int __must_check (*map_page)(struct domain *d, dfn_t dfn, mfn_t mfn,
                                  unsigned int flags,
                                  unsigned int *flush_flags,
-                                 u16 ctx_no);
+                                 struct iommu_context *ctx);
     int __must_check (*unmap_page)(struct domain *d, dfn_t dfn,
                                    unsigned int order,
                                    unsigned int *flush_flags,
-                                   u16 ctx_no);
+                                   struct iommu_context *ctx);
     int __must_check (*lookup_page)(struct domain *d, dfn_t dfn, mfn_t *mfn,
                                     unsigned int *flags,
-                                    u16 ctx_no);
+                                    struct iommu_context *ctx);
 
 #ifdef CONFIG_X86
     int (*enable_x2apic)(void);
@@ -309,7 +308,7 @@ struct iommu_ops {
     int (*setup_hpet_msi)(struct msi_desc *msi_desc);
 
     void (*adjust_irq_affinities)(void);
-    void (*clear_root_pgtable)(struct domain *d, struct arch_iommu_context *ctx);
+    void (*clear_root_pgtable)(struct domain *d, struct iommu_context *ctx);
     int (*update_ire_from_msi)(struct msi_desc *msi_desc, struct msi_msg *msg);
 #endif /* CONFIG_X86 */
 
@@ -356,10 +355,36 @@ extern int iommu_get_extra_reserved_device_memory(iommu_grdm_t *func,
 # define iommu_vcall iommu_call
 #endif
 
+struct iommu_context {
+    spinlock_t lock;
+    u16 id; /* Context id (0 means default context) */
+    struct list_head devices;
+
+    struct arch_iommu_context arch;
+};
+
+struct iommu_context_list {
+    uint16_t count; /* Context count excluding default context */
+    
+    /* if count > 0 */
+
+    uint64_t *bitmap; /* bitmap of context allocation */
+    struct iommu_context *map; /* Map of contexts */
+};
+
+
 struct domain_iommu {
+<<<<<<< HEAD
 #ifdef CONFIG_HAS_PASSTHROUGH
+=======
+    spinlock_t lock; /* iommu lock */
+>>>>>>> ba8de3553c (Move iommu context management logic to cross-vendor iommu code, add context dumping keyhandler.)
     struct arch_iommu arch;
 #endif
+
+    /* each context has a lock */
+    struct iommu_context default_ctx;
+    struct iommu_context_list other_contexts;
 
     /* iommu_ops */
     const struct iommu_ops *platform_ops;
@@ -393,6 +418,7 @@ struct domain_iommu {
 #define dom_iommu(d)              (&(d)->iommu)
 #define iommu_set_feature(d, f)   set_bit(f, dom_iommu(d)->features)
 #define iommu_clear_feature(d, f) clear_bit(f, dom_iommu(d)->features)
+#define iommu_default_context(d) (&dom_iommu(d)->default_ctx)
 
 /* Are we using the domain P2M table as its IOMMU pagetable? */
 #define iommu_use_hap_pt(d)       (IS_ENABLED(CONFIG_HVM) && \
@@ -427,6 +453,15 @@ int iommu_do_pci_domctl(struct xen_domctl *domctl, struct domain *d,
 
 void iommu_dev_iotlb_flush_timeout(struct domain *d, struct pci_dev *pdev);
 
+struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no);
+bool iommu_check_context(struct domain *d, u16 ctx_no);
+
+int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
+int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
+
+int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);
+int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags);
+
 /*
  * The purpose of the iommu_dont_flush_iotlb optional cpu flag is to
  * avoid unecessary iotlb_flush in the low level IOMMU code.
@@ -443,7 +478,6 @@ extern struct spinlock iommu_pt_cleanup_lock;
 extern struct page_list_head iommu_pt_cleanup_list;
 
 bool arch_iommu_use_permitted(const struct domain *d);
-void arch_iommu_context_init(struct arch_iommu_context *ctx);
 
 #ifdef CONFIG_X86
 static inline int iommu_update_ire_from_msi(

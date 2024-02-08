@@ -81,15 +81,11 @@ int can_use_iommu_check(struct domain *d)
 
 static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
 {
-    struct domain_iommu *hd = dom_iommu(d);
     u16 ctx_no = 0;
     int status = 0;
 
-    if (!hd->platform_ops->alloc_context)
-        return -ENOSYS; /* Non-supported */
-
-    status = hd->platform_ops->alloc_context(d, &ctx_no, op->flags);
-
+    status = iommu_context_alloc(d, &ctx_no, op->flags);
+    
     if (status < 0)
         return status;
 

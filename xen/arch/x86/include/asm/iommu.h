@@ -2,7 +2,7 @@
 #ifndef __ARCH_X86_IOMMU_H__
 #define __ARCH_X86_IOMMU_H__
 
-#include "xen/bitmap.h"
+#include <xen/bitmap.h>
 #include <xen/errno.h>
 #include <xen/list.h>
 #include <xen/mem_access.h>
@@ -33,17 +33,10 @@ typedef uint64_t daddr_t;
 #define dfn_to_daddr(dfn) __dfn_to_daddr(dfn_x(dfn))
 #define daddr_to_dfn(daddr) _dfn(__daddr_to_dfn(daddr))
 
-// Add context_list in pci_dev instead ?
-struct arch_iommu_context_device {
-    struct list_head list;
-    struct pci_dev *pdev;
-};
-
 struct arch_iommu_context
 {
-    spinlock_t lock;
+    spinlock_t pgtables_lock;
     struct page_list_head pgtables;
-    struct list_head devices;
 
     union {
         /* Intel VT-d */
@@ -57,22 +50,8 @@ struct arch_iommu_context
     };
 };
 
-struct arch_iommu_context_list {
-    uint16_t count; /* Context count excluding default context */
-    
-    /* if count > 0 */
-
-    uint64_t *bitmap; /* bitmap of context allocation */
-    struct arch_iommu_context *map; /* Map of contexts */
-};
-
 struct arch_iommu
 {
-    /* each context has a lock */
-    struct arch_iommu_context default_ctx;
-    struct arch_iommu_context_list other_contexts;
-
-    spinlock_t lock; /* iommu lock */
     struct list_head identity_maps;
 
     union {
@@ -88,29 +67,6 @@ struct arch_iommu
         } amd;
     };
 };
-
-#define iommu_default_context(hd) (&(hd)->arch.default_ctx)
-#define iommu_get_context(hd, ctx_no) (arch_iommu_get_context(&(hd)->arch, ctx_no))
-#define iommu_check_context(hd, ctx_no) (arch_iommu_check_context(&(hd)->arch, ctx_no))
-
-static inline bool arch_iommu_check_context(const struct arch_iommu *io, u16 ctx_no) {
-    if (ctx_no == 0)
-        return 1; /* Default context always exist. */
-    
-    if ((ctx_no - 1) >= io->other_contexts.count)
-        return 0; /* out of bounds */
-
-    return test_bit(ctx_no - 1, io->other_contexts.bitmap);
-}
-
-static inline struct arch_iommu_context *arch_iommu_get_context(struct arch_iommu *io, u16 ctx_no) {
-    ASSERT(arch_iommu_check_context(io, ctx_no));
-
-    if (ctx_no == 0)
-        return &io->default_ctx;
-    else
-        return &io->other_contexts.map[ctx_no - 1];
-}
 
 extern struct iommu_ops iommu_ops;
 
@@ -184,15 +140,18 @@ unsigned long *iommu_init_domid(domid_t reserve);
 domid_t iommu_alloc_domid(unsigned long *map);
 void iommu_free_domid(domid_t domid, unsigned long *map);
 
-int __must_check iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx);
+struct iommu_context;
+int __must_check iommu_free_pgtables(struct domain *d, struct iommu_context *ctx);
 struct domain_iommu;
 struct page_info *__must_check iommu_alloc_pgtable(struct domain_iommu *hd,
-                                                   struct arch_iommu_context *ctx,
+                                                   struct iommu_context *ctx,
                                                    uint64_t contig_mask);
-void iommu_queue_free_pgtable(struct arch_iommu_context *ctx, struct page_info *pg);
+void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg);
 
 /* Check [start, end] unity map range for correctness. */
 bool iommu_unity_region_ok(const char *prefix, mfn_t start, mfn_t end);
+int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
+int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
 
 #endif /* !__ARCH_X86_IOMMU_H__ */
 /*

@@ -21,6 +21,10 @@
 #include <xen/softirq.h>
 #include <xen/keyhandler.h>
 #include <xsm/xsm.h>
+#include <asm/iommu.h>
+#include <asm/bitops.h>
+#include <asm/device.h>
+#include <xen/spinlock.h>
 
 unsigned int __read_mostly iommu_dev_iotlb_timeout = 1000;
 integer_param("iommu_dev_iotlb_timeout", iommu_dev_iotlb_timeout);
@@ -200,6 +204,7 @@ static void __hwdom_init check_hwdom_reqs(struct domain *d)
 int iommu_domain_init(struct domain *d, unsigned int opts)
 {
     struct domain_iommu *hd = dom_iommu(d);
+    uint16_t other_context_count;
     int ret = 0;
 
     if ( is_hardware_domain(d) )
@@ -239,6 +244,27 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
         hd->need_sync = !iommu_use_hap_pt(d);
 
     ASSERT(!(hd->need_sync && hd->hap_pt_share));
+
+    spin_lock_init(&hd->lock);
+
+    if (is_hardware_domain(d)) {
+        BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
+        printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
+        hd->other_contexts.count = iommu_hwdom_nb_ctx - 1;
+    } else
+        hd->other_contexts.count = 0;
+
+    other_context_count = hd->other_contexts.count;
+    if (other_context_count > 0) {
+        /* Initialize context bitmap */
+        hd->other_contexts.bitmap = xzalloc_array(unsigned long, BITS_TO_LONGS(other_context_count));
+        hd->other_contexts.map = xzalloc_array(struct iommu_context, other_context_count);
+    } else {
+        hd->other_contexts.bitmap = NULL;
+        hd->other_contexts.map = NULL;
+    }
+
+    iommu_context_init(d, &hd->default_ctx, 0);
 
     return 0;
 }
@@ -328,6 +354,32 @@ static unsigned int mapping_order(const struct domain_iommu *hd,
     return order;
 }
 
+
+bool iommu_check_context(struct domain *d, u16 ctx_no) {
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (ctx_no == 0)
+        return 1; /* Default context always exist. */
+    
+    if ((ctx_no - 1) >= hd->other_contexts.count)
+        return 0; /* out of bounds */
+
+    return test_bit(ctx_no - 1, hd->other_contexts.bitmap);
+}
+
+struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (!iommu_check_context(d, ctx_no)) {
+        return NULL;
+    }
+
+    if (ctx_no == 0)
+        return &hd->default_ctx;
+    else
+        return &hd->other_contexts.map[ctx_no - 1];
+}
+
 long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                unsigned long page_count, unsigned int flags,
                unsigned int *flush_flags, u16 ctx_no)
@@ -339,6 +391,9 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
 
     if ( !is_iommu_enabled(d) )
         return 0;
+
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
 
     ASSERT(!IOMMUF_order(flags));
 
@@ -356,7 +411,7 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
 
         rc = iommu_call(hd->platform_ops, map_page, d, dfn, mfn,
                         flags | IOMMUF_order(order), flush_flags,
-                        ctx_no);
+                        iommu_get_context(d, ctx_no));
 
         if ( likely(!rc) )
             continue;
@@ -414,6 +469,9 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
     if ( !is_iommu_enabled(d) )
         return 0;
 
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
     ASSERT(!(flags & ~IOMMUF_preempt));
 
     for ( i = 0; i < page_count; i += 1UL << order )
@@ -430,7 +488,7 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
 
         err = iommu_call(hd->platform_ops, unmap_page, d, dfn,
                          flags | IOMMUF_order(order), flush_flags,
-                         ctx_no);
+                         iommu_get_context(d, ctx_no));
 
         if ( likely(!err) )
             continue;
@@ -480,7 +538,10 @@ int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
     if ( !is_iommu_enabled(d) || !hd->platform_ops->lookup_page )
         return -EOPNOTSUPP;
 
-    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags, ctx_no);
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
+    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags, iommu_get_context(d, ctx_no));
 }
 
 int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
@@ -729,6 +790,122 @@ int __init iommu_get_extra_reserved_device_memory(iommu_grdm_t *func,
         if ( ret < 0 )
             return ret;
     }
+
+    return 0;
+}
+
+int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    if (!dom_iommu(d)->platform_ops->context_init)
+        return -ENOSYS;
+
+    spin_lock_init(&ctx->lock);
+    INIT_LIST_HEAD(&ctx->devices);
+
+    return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
+}
+
+int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    if (!dom_iommu(d)->platform_ops->context_teardown)
+        return -ENOSYS;
+
+    /* first reattach devices back to default context if needed */
+    /*
+    if (flags & REATTACH_DEFAULT_CTX)
+        ...
+    */
+
+    return iommu_call(dom_iommu(d)->platform_ops, context_teardown, d, ctx, flags);
+}
+
+int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    unsigned int i;
+    int ret;
+
+    spin_lock(&hd->lock);
+
+    /* TODO: use TSL instead ? */
+    i = find_first_zero_bit(hd->other_contexts.bitmap, hd->other_contexts.count);
+
+    if (i < hd->other_contexts.count)
+        __set_bit(i, hd->other_contexts.bitmap);
+
+
+    if (i >= hd->other_contexts.count) /* no free context */
+        return -ENOSPC;
+
+    *ctx_no = i;
+
+    ret = iommu_context_init(d, iommu_get_context(d, *ctx_no), flags);
+
+    if (ret)
+        __clear_bit(*ctx_no, hd->other_contexts.bitmap);
+
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    if (ctx_no == 0)
+        return -EINVAL;
+
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
+    spin_lock(&hd->lock);
+    ret = iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
+
+    if (!ret)
+        clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
+
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+{
+    u16 prev_ctx_no;
+    device_t *ctx_dev;
+    struct domain_iommu *hd = dom_iommu(d);
+    struct iommu_context *prev_ctx, *next_ctx;
+
+    prev_ctx_no = dev->context;
+
+    if (ctx_no == prev_ctx_no) {
+        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu is no-op", &dev, ctx_no);
+        return 0;
+    }
+
+    if (!iommu_check_context(d, ctx_no)) {
+        return -ENOENT;
+    }
+
+    /* Remove device from previous context, and add it to new one. */
+    spin_lock(&hd->lock);
+
+    prev_ctx = iommu_get_context(d, prev_ctx_no);
+    next_ctx = iommu_get_context(d, ctx_no);
+    
+    list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list) {
+        if (ctx_dev == dev) {
+            list_del(&ctx_dev->context_list);
+            list_add(&ctx_dev->context_list, &next_ctx->devices);
+            break;
+        }
+    }
+
+    iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
+
+    spin_unlock(&hd->lock);
 
     return 0;
 }

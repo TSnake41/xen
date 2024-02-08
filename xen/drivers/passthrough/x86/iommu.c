@@ -12,10 +12,10 @@
  * this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "xen/lib.h"
-#include "xen/pci.h"
-#include "xen/spinlock.h"
-#include <asm-generic/errno-base.h>
+#include <xen/keyhandler.h>
+#include <xen/lib.h>
+#include <xen/pci.h>
+#include <xen/spinlock.h>
 #include <xen/bitmap.h>
 #include <xen/list.h>
 #include <xen/mm.h>
@@ -143,7 +143,7 @@ int __init iommu_hardware_setup(void)
         unmask_8259A();
         free_ioapic_entries(ioapic_entries);
     }
-
+    
     return rc;
 }
 
@@ -191,47 +191,26 @@ void __hwdom_init arch_iommu_check_autotranslated_hwdom(struct domain *d)
         panic("PVH hardware domain iommu must be set in 'strict' mode\n");
 }
 
-void arch_iommu_context_init(struct arch_iommu_context *ctx)
+int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    INIT_PAGE_LIST_HEAD(&ctx->pgtables);
-    spin_lock_init(&ctx->lock);
-
-    INIT_LIST_HEAD(&ctx->devices);
+    INIT_PAGE_LIST_HEAD(&ctx->arch.pgtables);
+    return 0;
 }
 
-void arch_iommu_context_destroy(struct domain *d, struct arch_iommu_context *ctx, bool dont_reattach)
+int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
     /* TODO */
     /* page_list_empty(&ctx->pgtables); */
+
+    return 0;
 }
 
 int arch_iommu_domain_init(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
-    uint16_t other_context_count;
 
-    spin_lock_init(&hd->arch.lock);
     INIT_LIST_HEAD(&hd->arch.identity_maps);
     
-    if (is_hardware_domain(d)) {
-        BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
-        printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
-        hd->arch.other_contexts.count = iommu_hwdom_nb_ctx - 1;
-    } else
-        hd->arch.other_contexts.count = 0;
-
-    arch_iommu_context_init(iommu_default_context(hd));
-
-    other_context_count = hd->arch.other_contexts.count;
-    if (other_context_count > 0) {
-        /* Initialize context lit */
-        hd->arch.other_contexts.bitmap = xzalloc_array(unsigned long, BITS_TO_LONGS(other_context_count));
-        hd->arch.other_contexts.map = xzalloc_array(struct arch_iommu_context, other_context_count);
-    } else {
-        hd->arch.other_contexts.bitmap = NULL;
-        hd->arch.other_contexts.map = NULL;
-    }
-
     return 0;
 }
 
@@ -245,80 +224,6 @@ void arch_iommu_domain_destroy(struct domain *d)
     struct domain_iommu *hd = dom_iommu(d);
 
     ASSERT(!hd->platform_ops);
-
-    for (unsigned int i = 0; i < (1 + hd->arch.other_contexts.count); ++i) {
-        if (iommu_check_context(hd, i)) {
-            ASSERT(page_list_empty(&iommu_get_context(hd, i)->pgtables));
-        }
-    }
-}
-
-bool arch_iommu_context_has_device(struct arch_iommu_context *ctx, const struct pci_dev *pdev)
-{
-    struct arch_iommu_context_device *ctx_dev;
-
-    ASSERT(pdev);
-
-    list_for_each_entry(ctx_dev, &ctx->devices, list) {
-        if (pdev == ctx_dev->pdev) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-int arch_iommu_get_device_context(struct domain *d, struct pci_dev *pdev, u16 *ctx_no)
-{
-    struct domain_iommu *hd = dom_iommu(d);
-
-    for (unsigned int i = 0; i < (1 + hd->arch.other_contexts.count); ++i) {
-        if (iommu_check_context(hd, i)
-            && arch_iommu_context_has_device(iommu_get_context(hd, i), pdev)) {
-                *ctx_no = i;
-                return 0;
-        }
-    }
-
-    return -ENOENT;
-}
-
-int arch_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_dev *pdev, u16 ctx_no)
-{
-    int ret;
-    u16 prev_ctx_no;
-    struct arch_iommu_context_device *ctx_dev;
-    struct domain_iommu *hd = dom_iommu(d);
-
-    /* The device must be bound to a context. */
-    ASSERT(!arch_iommu_get_device_context(d, pdev, &prev_ctx_no));
-
-    if (ctx_no == prev_ctx_no) {
-        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu is no-op", &pdev->sbdf, ctx_no);
-        return 0;
-    }
-
-    if (!iommu_check_context(hd, ctx_no)) {
-        return -ENOENT;
-    }
-
-    /* Remove device from previous context, and add it to new one. */
-    spin_lock(&hd->arch.lock);
-
-    struct arch_iommu_context *prev_ctx = iommu_get_context(hd, prev_ctx_no);
-    struct arch_iommu_context *next_ctx = iommu_get_context(hd, ctx_no);
-    
-    list_for_each_entry(ctx_dev, &prev_ctx->devices, list) {
-        if (ctx_dev->pdev == pdev) {
-            list_del(&ctx_dev->list);
-            list_add(&ctx_dev->list, &next_ctx->devices);
-            break;
-        }
-    }
-
-    iommu_call(d->iommu, reattach_context, d, devfn, pdev, ctx_no);
-
-    spin_unlock(&hd->arch.lock);
 }
 
 struct identity_map {
@@ -722,7 +627,7 @@ void iommu_free_domid(domid_t domid, unsigned long *map)
         BUG();
 }
 
-int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
+int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
 {
     struct domain_iommu *hd = dom_iommu(d);
     struct page_info *pg;
@@ -732,7 +637,7 @@ int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
         return 0;
 
     /* After this barrier, no new IOMMU mappings can be inserted. */
-    spin_barrier(&hd->arch.lock);
+    spin_barrier(&hd->lock);
 
     /*
      * Pages will be moved to the free list below. So we want to
@@ -740,7 +645,7 @@ int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
      */
     iommu_vcall(hd->platform_ops, clear_root_pgtable, d, ctx);
 
-    while ( (pg = page_list_remove_head(&ctx->pgtables)) )
+    while ( (pg = page_list_remove_head(&ctx->arch.pgtables)) )
     {
         free_domheap_page(pg);
 
@@ -752,7 +657,7 @@ int iommu_free_pgtables(struct domain *d, struct arch_iommu_context *ctx)
 }
 
 struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
-                                      struct arch_iommu_context *ctx,
+                                      struct iommu_context *ctx,
                                       uint64_t contig_mask)
 {
     unsigned int memflags = 0;
@@ -798,7 +703,7 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
     unmap_domain_page(p);
 
     spin_lock(&ctx->lock);
-    page_list_add(pg, &ctx->pgtables);
+    page_list_add(pg, &ctx->arch.pgtables);
     spin_unlock(&ctx->lock);
 
     return pg;
@@ -838,12 +743,12 @@ static void cf_check free_queued_pgtables(void *arg)
     }
 }
 
-void iommu_queue_free_pgtable(struct arch_iommu_context *ctx, struct page_info *pg)
+void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg)
 {
     unsigned int cpu = smp_processor_id();
 
     spin_lock(&ctx->lock);
-    page_list_del(pg, &ctx->pgtables);
+    page_list_del(pg, &ctx->arch.pgtables);
     spin_unlock(&ctx->lock);
 
     page_list_add_tail(pg, &per_cpu(free_pgt_list, cpu));
