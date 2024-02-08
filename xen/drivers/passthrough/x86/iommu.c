@@ -637,7 +637,7 @@ int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
         return 0;
 
     /* After this barrier, no new IOMMU mappings can be inserted. */
-    spin_barrier(&hd->lock);
+    spin_barrier(&ctx->lock);
 
     /*
      * Pages will be moved to the free list below. So we want to
@@ -702,9 +702,7 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
 
     unmap_domain_page(p);
 
-    spin_lock(&ctx->lock);
     page_list_add(pg, &ctx->arch.pgtables);
-    spin_unlock(&ctx->lock);
 
     return pg;
 }

@@ -245,8 +245,6 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
 
     ASSERT(!(hd->need_sync && hd->hap_pt_share));
 
-    spin_lock_init(&hd->lock);
-
     if (is_hardware_domain(d)) {
         BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
         printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
@@ -875,7 +873,6 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
 {
     u16 prev_ctx_no;
     device_t *ctx_dev;
-    struct domain_iommu *hd = dom_iommu(d);
     struct iommu_context *prev_ctx, *next_ctx;
 
     prev_ctx_no = dev->context;
@@ -890,11 +887,13 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
     }
 
     /* Remove device from previous context, and add it to new one. */
-    spin_lock(&hd->lock);
 
     prev_ctx = iommu_get_context(d, prev_ctx_no);
     next_ctx = iommu_get_context(d, ctx_no);
     
+    spin_lock(&prev_ctx->lock);
+    spin_lock(&next_ctx->lock);
+
     list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list) {
         if (ctx_dev == dev) {
             list_del(&ctx_dev->context_list);
@@ -904,8 +903,9 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
     }
 
     iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
-
-    spin_unlock(&hd->lock);
+    
+    spin_unlock(&prev_ctx->lock);
+    spin_unlock(&next_ctx->lock);
 
     return 0;
 }
