@@ -2645,19 +2645,24 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
     unsigned int i;
     struct pci_dev *pdev;
     struct iommu_context *ctx;
+    struct domain_iommu *hd = dom_iommu(d);
 
-    printk("d%hu contexts", d->domain_id);
+    printk("d%hu contexts\n", d->domain_id);
+
+    spin_lock(&hd->lock);
 
     for (i = 0; i < (1 + dom_iommu(d)->other_contexts.count); ++i) {
         if (iommu_check_context(d, i)) {
-            printk(" Context %d", i);
+            printk(" Context %d\n", i);
             ctx = iommu_get_context(d, i);
 
             list_for_each_entry(pdev, &ctx->devices, context_list) {
-                printk("  - %pp", &pdev->sbdf);
+                printk("  - %pp\n", &pdev->sbdf);
             }
         }
     }
+    
+    spin_unlock(&hd->lock);
 }
 
 static void arch_iommu_dump_contexts(unsigned char key)
