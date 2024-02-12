@@ -2040,9 +2040,11 @@ static const struct acpi_drhd_unit *domain_context_unmap(
 
 static void cf_check iommu_clear_root_pgtable(struct domain *d, struct iommu_context *ctx)
 {
-    spin_lock(&ctx->lock);
+    struct domain_iommu *hd = dom_iommu(d);
+
+    spin_lock(&hd->lock);
     ctx->arch.vtd.pgd_maddr = 0;
-    spin_unlock(&ctx->lock);
+    spin_unlock(&hd->lock);
 }
 
 static void cf_check iommu_domain_teardown(struct domain *d)
@@ -2107,19 +2109,17 @@ static int __must_check cf_check intel_iommu_map_page(
     if ( iommu_hwdom_passthrough && is_hardware_domain(d) && !ctx->id )
         return 0;
 
-    spin_lock(&ctx->lock);
+    spin_lock(&hd->lock);
 
     /*
      * IOMMU mapping request can be safely ignored when the domain is dying.
      *
-     * ctx->lock guarantees that d->is_dying will be observed
+     * hd->lock guarantees that d->is_dying will be observed
      * before any page tables are freed (see iommu_free_pgtables())
-     *
-     * TODO: Make sure it is still valid with ctx->lock
      */
     if ( d->is_dying )
     {
-        spin_unlock(&ctx->lock);
+        spin_unlock(&hd->lock);
         return 0;
     }
 
@@ -2127,7 +2127,7 @@ static int __must_check cf_check intel_iommu_map_page(
                                       true);
     if ( pg_maddr < PAGE_SIZE )
     {
-        spin_unlock(&ctx->lock);
+        spin_unlock(&hd->lock);
         return -ENOMEM;
     }
 
@@ -2148,7 +2148,7 @@ static int __must_check cf_check intel_iommu_map_page(
 
     if ( !((old.val ^ new.val) & ~DMA_PTE_CONTIG_MASK) )
     {
-        spin_unlock(&ctx->lock);
+        spin_unlock(&hd->lock);
         unmap_vtd_domain_page(page);
         return 0;
     }
@@ -2191,7 +2191,7 @@ static int __must_check cf_check intel_iommu_map_page(
         perfc_incr(iommu_pt_coalesces);
     }
 
-    spin_unlock(&ctx->lock);
+    spin_unlock(&hd->lock);
     unmap_vtd_domain_page(page);
 
     *flush_flags |= IOMMU_FLUSHF_added;
@@ -2231,12 +2231,12 @@ static int __must_check cf_check intel_iommu_unmap_page(
     if ( iommu_hwdom_passthrough && is_hardware_domain(d) )
         return 0;
 
-    spin_lock(&ctx->lock);
+    spin_lock(&hd->lock);
     /* get target level pte */
     pg_maddr = addr_to_dma_page_maddr(d, ctx, addr, level, flush_flags, false);
     if ( pg_maddr < PAGE_SIZE )
     {
-        spin_unlock(&ctx->lock);
+        spin_unlock(&hd->lock);
         return pg_maddr ? -ENOMEM : 0;
     }
 
@@ -2245,7 +2245,7 @@ static int __must_check cf_check intel_iommu_unmap_page(
 
     if ( !dma_pte_present(*pte) )
     {
-        spin_unlock(&ctx->lock);
+        spin_unlock(&hd->lock);
         unmap_vtd_domain_page(page);
         return 0;
     }
@@ -2276,7 +2276,7 @@ static int __must_check cf_check intel_iommu_unmap_page(
         perfc_incr(iommu_pt_coalesces);
     }
 
-    spin_unlock(&ctx->lock);
+    spin_unlock(&hd->lock);
 
     unmap_vtd_domain_page(page);
 
@@ -2294,6 +2294,7 @@ static int cf_check intel_iommu_lookup_page(
     struct iommu_context *ctx)
 {
     uint64_t val;
+    struct domain_iommu *hd = dom_iommu(d);
 
     /*
      * If VT-d shares EPT page table or if the domain is the hardware
@@ -2303,11 +2304,11 @@ static int cf_check intel_iommu_lookup_page(
          (iommu_hwdom_passthrough && is_hardware_domain(d)) )
         return -EOPNOTSUPP;
 
-    spin_lock(&ctx->lock);
+    spin_lock(&hd->lock);
 
     val = addr_to_dma_page_maddr(d, ctx, dfn_to_daddr(dfn), 0, NULL, false);
 
-    spin_unlock(&ctx->lock);
+    spin_unlock(&hd->lock);
 
     if ( val < PAGE_SIZE )
         return -ENOENT;
@@ -3318,16 +3319,10 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
 
 static int intel_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_dev *pdev, struct iommu_context *ctx)
 {
-    int ret;
-
     if (!pdev)
         return -EINVAL;
-
-    spin_lock(&ctx->lock);
-    ret = domain_context_mapping(d, devfn, pdev, ctx);
-    spin_unlock(&ctx->lock);
-
-    return ret;
+    
+    return domain_context_mapping(d, devfn, pdev, ctx);
 }
 
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {

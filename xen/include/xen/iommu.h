@@ -23,7 +23,6 @@
 #include <xen/init.h>
 #include <xen/page-defs.h>
 #include <xen/pci.h>
-#include <xen/spinlock.h>
 #include <xen/errno.h>
 #include <public/domctl.h>
 #include <public/hvm/ioreq.h>
@@ -356,7 +355,6 @@ extern int iommu_get_extra_reserved_device_memory(iommu_grdm_t *func,
 #endif
 
 struct iommu_context {
-    spinlock_t lock;
     u16 id; /* Context id (0 means default context) */
     struct list_head devices;
 

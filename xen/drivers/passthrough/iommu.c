@@ -797,7 +797,6 @@ int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
     if (!dom_iommu(d)->platform_ops->context_init)
         return -ENOSYS;
 
-    spin_lock_init(&ctx->lock);
     INIT_LIST_HEAD(&ctx->devices);
 
     return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
@@ -805,6 +804,9 @@ int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 
 int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
     if (!dom_iommu(d)->platform_ops->context_teardown)
         return -ENOSYS;
 
@@ -814,14 +816,18 @@ int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flag
         ...
     */
 
-    return iommu_call(dom_iommu(d)->platform_ops, context_teardown, d, ctx, flags);
+    spin_lock(&hd->lock);
+    ret = iommu_call(dom_iommu(d)->platform_ops, context_teardown, d, ctx, flags);
+    spin_unlock(&hd->lock);
+
+    return ret;
 }
 
 int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
 {
-    struct domain_iommu *hd = dom_iommu(d);
     unsigned int i;
     int ret;
+    struct domain_iommu *hd = dom_iommu(d);
 
     spin_lock(&hd->lock);
 
@@ -849,16 +855,16 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
 
 int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
 {
-    struct domain_iommu *hd = dom_iommu(d);
     int ret;
+    struct domain_iommu *hd = dom_iommu(d);
 
     if (ctx_no == 0)
         return -EINVAL;
 
+    spin_lock(&hd->lock);
     if (!iommu_check_context(d, ctx_no))
         return -ENOENT;
 
-    spin_lock(&hd->lock);
     ret = iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
 
     if (!ret)
@@ -874,7 +880,9 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
     u16 prev_ctx_no;
     device_t *ctx_dev;
     struct iommu_context *prev_ctx, *next_ctx;
+    struct domain_iommu *hd = dom_iommu(d);
 
+    spin_lock(&hd->lock);
     prev_ctx_no = dev->context;
 
     if (ctx_no == prev_ctx_no) {
@@ -890,9 +898,6 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
 
     prev_ctx = iommu_get_context(d, prev_ctx_no);
     next_ctx = iommu_get_context(d, ctx_no);
-    
-    spin_lock(&prev_ctx->lock);
-    spin_lock(&next_ctx->lock);
 
     list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list) {
         if (ctx_dev == dev) {
@@ -903,9 +908,7 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
     }
 
     iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
-    
-    spin_unlock(&prev_ctx->lock);
-    spin_unlock(&next_ctx->lock);
+    spin_unlock(&hd->lock);
 
     return 0;
 }

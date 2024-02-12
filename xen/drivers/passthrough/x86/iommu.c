@@ -194,6 +194,7 @@ void __hwdom_init arch_iommu_check_autotranslated_hwdom(struct domain *d)
 int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
     INIT_PAGE_LIST_HEAD(&ctx->arch.pgtables);
+    spin_lock_init(&ctx->arch.pgtables_lock);
     return 0;
 }
 
@@ -637,7 +638,7 @@ int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
         return 0;
 
     /* After this barrier, no new IOMMU mappings can be inserted. */
-    spin_barrier(&ctx->lock);
+    spin_barrier(&ctx->arch.pgtables_lock);
 
     /*
      * Pages will be moved to the free list below. So we want to
@@ -745,9 +746,9 @@ void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg)
 {
     unsigned int cpu = smp_processor_id();
 
-    spin_lock(&ctx->lock);
+    spin_lock(&ctx->arch.pgtables_lock);
     page_list_del(pg, &ctx->arch.pgtables);
-    spin_unlock(&ctx->lock);
+    spin_unlock(&ctx->arch.pgtables_lock);
 
     page_list_add_tail(pg, &per_cpu(free_pgt_list, cpu));
 
