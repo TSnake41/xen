@@ -20,6 +20,7 @@
 #include <xen/lib.h>
 #include <xen/iommu.h>
 #include <xen/sched.h>
+#include <xen/pci.h>
 #include <xen/guest_access.h>
 #include <asm/p2m.h>
 #include <asm/event.h>
@@ -27,15 +28,14 @@
 
 #define PVIOMMU_PREFIX "[PV-IOMMU]"
 
-#if 0
-static int get_paged_frame(gfn_t gfn, mfn_t *mfn,
-                           struct page_info **page, int readonly,
-                           struct domain *rd)
+static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
+                           struct page_info **page, int readonly)
 {
     p2m_type_t p2mt;
 
-    *page = get_page_from_gfn(rd, gfn.gfn, &p2mt,
+    *page = get_page_from_gfn(d, gfn_x(gfn), &p2mt,
                              (readonly) ? P2M_ALLOC : P2M_UNSHARE);
+    
     if ( !(*page) )
     {
         *mfn = INVALID_MFN;
@@ -43,7 +43,7 @@ static int get_paged_frame(gfn_t gfn, mfn_t *mfn,
             return -EIO;
         if ( p2m_is_paging(p2mt) )
         {
-            p2m_mem_paging_populate(rd, gfn);
+            p2m_mem_paging_populate(d, gfn);
             return -EIO;
         }
         return -EIO;
@@ -52,7 +52,6 @@ static int get_paged_frame(gfn_t gfn, mfn_t *mfn,
 
     return 0;
 }
-#endif
 
 int can_use_iommu_check(struct domain *d)
 {
@@ -93,106 +92,107 @@ static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
     return 0;
 }
 
+static long free_context_op(struct pv_iommu_op *op, struct domain *d)
+{
+    return iommu_context_free(d, op->ctx_no, op->flags);
+}
+
+static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
+{
+    struct physdev_pci_device *dev = &op->reattach_device.dev;
+    device_t *pdev;
+
+    pdev = pci_get_pdev(d, PCI_SBDF(dev->seg, dev->bus, dev->devfn));
+
+    if (!pdev)
+        return !ENOENT;
+
+    return iommu_reattach_context(d, op->ctx_no, pdev, op->ctx_no);
+}
+
+static long map_page_op(struct pv_iommu_op *op, struct domain *d)
+{
+    struct page_info *page = NULL;
+    mfn_t mfn;
+    unsigned int flags;
+    unsigned int flush_flags = 0;
+
+    /* Lookup page struct backing gfn */
+    if ( get_paged_frame(d, _gfn(op->map_page.gfn), &mfn, &page, 0) )
+        return -EPERM; // Should this be something else?
+
+    /* Check for conflict with existing BFN mappings */
+    if ( !iommu_lookup_page(d, _dfn(op->map_page.dfn), &mfn, &flags, op->ctx_no) )
+    {
+        put_page(page);
+        return -EADDRINUSE;
+    }
+
+    flags = 0;
+
+    if ( op->flags & IOMMU_OP_readable )
+        flags |= IOMMUF_readable;
+
+    if ( op->flags & IOMMU_OP_writeable )
+        flags |= IOMMUF_writable;
+
+    if ( iommu_map(d, _dfn(op->map_page.dfn), mfn,
+                   PAGE_ORDER_4K, flags, &flush_flags, op->ctx_no) )
+    {
+        put_page(page);
+        return -EIO;
+    }
+
+    return 0;
+}
+
+static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
+{
+    struct page_info *page = NULL;
+    mfn_t mfn;
+    unsigned int flags;
+    unsigned int flush_flags = 0;
+
+    /* Check if there is a valid BFN mapping for this domain */
+    if ( iommu_lookup_page(d, _dfn(op->unmap_page.dfn), &mfn, &flags, op->ctx_no) )
+        return -ENOENT;
+
+    if (iommu_unmap(d, _dfn(op->unmap_page.dfn), PAGE_ORDER_4K, 0, &flush_flags, op->ctx_no))
+        return -EIO;
+
+    /* Use MFN from B2M mapping to lookup page */
+    page = mfn_to_page(mfn);
+    put_page(page);
+
+    return 0;
+}
+
 long do_iommu_sub_op(struct pv_iommu_op *op)
 {
     struct domain *d = current->domain;
-    //struct domain_iommu *hd = dom_iommu(d);
+
+    if (!can_use_iommu_check(d))
+        return -EPERM;
 
     switch ( op->subop_id )
     {
         case IOMMUOP_alloc_context:
             return alloc_context_op(op, d);
-        #if 0
+        
+        case IOMMUOP_free_context:
+            return free_context_op(op, d);
+
+        case IOMMUOP_reattach_device:
+            return reattach_device_op(op, d);
+        
         case IOMMUOP_map_page:
-        {
-            mfn_t mfn, tmp;
-            unsigned int flags;
-            struct page_info *page = NULL;
-
-            /* Check if calling domain can create IOMMU mappings */
-            if ( !can_use_iommu_check(d) )
-            {
-                op->status = -EPERM;
-                goto finish;
-            }
-
-            /* Lookup page struct backing gfn */
-            if ( (op->flags & IOMMU_MAP_OP_no_ref_cnt) )
-            {
-                mfn = _mfn(op->u.map_page.gfn);
-                page = mfn_to_page(mfn);
-                if (!page)
-                {
-                    op->status = -EPERM; // Should this be something else?
-                    goto finish;
-                }
-            } else if ( get_paged_frame(op->u.map_page.gfn, &mfn, &page, 0, d) )
-            {
-                op->status = -EPERM; // Should this be something else?
-                goto finish;
-            }
-
-            /* Check for conflict with existing BFN mappings */
-            if ( !iommu_lookup_page(d, _dfn(op->u.map_page.bfn), &tmp, &flags) )
-            {
-                if ( !(op->flags & IOMMU_MAP_OP_no_ref_cnt) )
-                    put_page(page);
-                op->status = -EPERM;
-                goto finish;
-            }
-
-            flags = 0;
-
-            if ( op->flags & IOMMU_OP_readable )
-                flags |= IOMMUF_readable;
-
-            if ( op->flags & IOMMU_OP_writeable )
-                flags |= IOMMUF_writable;
-
-            if ( iommu_legacy_map(d, _dfn(op->u.map_page.bfn), mfn,
-                                  PAGE_ORDER_4K, flags) )
-            {
-                if ( !(op->flags & IOMMU_MAP_OP_no_ref_cnt) )
-                    put_page(page);
-                op->status = -EIO;
-                goto finish;
-            }
-
-            op->status = 0;
-            break;
-        }
-
+            return map_page_op(op, d);
+        
         case IOMMUOP_unmap_page:
-        {
-            struct page_info *page;
-            mfn_t mfn;
-            unsigned int flags;
-
-            /* Check if there is a valid BFN mapping for this domain */
-            if ( iommu_lookup_page(d, _dfn(op->u.unmap_page.bfn), &mfn, &flags) )
-            {
-                op->status = -ENOENT;
-                goto finish;
-            }
-
-            if ( iommu_legacy_unmap(d, _dfn(op->u.unmap_page.bfn),
-                                    PAGE_ORDER_4K) )
-            {
-                op->status = -EIO;
-                goto finish;
-            }
-
-            /* Use MFN from B2M mapping to lookup page */
-            page = mfn_to_page(mfn);
-            if ( !(op->flags & IOMMU_MAP_OP_no_ref_cnt) )
-                put_page(page);
-
-            op->status = 0;
-            break;
-        }
-        #endif
+            return unmap_page_op(op, d);
+        
         default:
-            return -ENODEV;
+            return -EINVAL;
     }
 }
 
@@ -219,13 +219,13 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
             ret =  i;
             goto flush_pages;
         }
-        if ( unlikely(__copy_from_guest_offset(&op, arg, i, 1)) )
+        if ( unlikely(copy_from_guest_offset(&op, arg, i, 1)) )
         {
             ret = -EFAULT;
             goto flush_pages;
         }
         ret = do_iommu_sub_op(&op);
-        if ( unlikely(__copy_to_guest_offset(arg, i, &op, 1)) )
+        if ( unlikely(copy_to_guest_offset(arg, i, &op, 1)) )
         {
             ret = -EFAULT;
             goto flush_pages;

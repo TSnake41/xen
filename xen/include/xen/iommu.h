@@ -460,6 +460,8 @@ int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flag
 int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);
 int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags);
 
+int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no);
+
 /*
  * The purpose of the iommu_dont_flush_iotlb optional cpu flag is to
  * avoid unecessary iotlb_flush in the low level IOMMU code.

@@ -29,7 +29,7 @@
 /**
  * Allocate an IOMMU context, the new context handle will be written to ctx_no.
  */
-#define IOMMUOP_alloc_context        2
+#define IOMMUOP_alloc_context         2
 
 /**
  * Destroy a IOMMU context.
@@ -37,15 +37,15 @@
  *
  * The default context can't be destroyed (0).
  */
-#define IOMMUOP_free_context       3
+#define IOMMUOP_free_context          3
 
 /**
  * Reattach the device to IOMMU context.
  */
-#define IOMMUOP_reattach_device           4
+#define IOMMUOP_reattach_device       4
 
-#define IOMMUOP_map_page              4
-#define IOMMUOP_unmap_page            5
+#define IOMMUOP_map_page              5
+#define IOMMUOP_unmap_page            6
 
 struct pv_iommu_op {
     uint16_t subop_id;
