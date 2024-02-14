@@ -373,7 +373,7 @@ struct iommu_context_list {
 
 struct domain_iommu {
     spinlock_t lock; /* iommu lock */
-    
+
 #ifdef CONFIG_HAS_PASSTHROUGH
     struct arch_iommu arch;
 #endif
@@ -453,6 +453,8 @@ struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no);
 bool iommu_check_context(struct domain *d, u16 ctx_no);
 
 int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
+
+#define IOMMU_TEARDOWNF_REATTACH_DEFAULT (1 << 0)
 int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
 
 int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);

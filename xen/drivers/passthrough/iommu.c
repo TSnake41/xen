@@ -811,10 +811,14 @@ int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flag
         return -ENOSYS;
 
     /* first reattach devices back to default context if needed */
-    /*
-    if (flags & REATTACH_DEFAULT_CTX)
-        ...
-    */
+    if (flags & IOMMU_TEARDOWNF_REATTACH_DEFAULT) {
+        struct pci_dev *device;
+        list_for_each_entry(device, &ctx->devices, context_list) {
+            iommu_reattach_context(d, device->devfn, device, 0);
+        }
+    } else if (!list_empty(&ctx->devices)) {
+        return -EBUSY; /* there is a device in context */
+    }
 
     spin_lock(&hd->lock);
     ret = iommu_call(dom_iommu(d)->platform_ops, context_teardown, d, ctx, flags);
