@@ -3127,7 +3127,7 @@ static void vtd_dump_page_table_level(paddr_t pt_maddr, int level, paddr_t gpa,
         return;
 
     if (pt_maddr == 0) {
-        printk(" (empty)");
+        printk(" (empty)\n");
         return;
     }
 

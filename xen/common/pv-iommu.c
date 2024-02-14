@@ -26,7 +26,7 @@
 #include <asm/event.h>
 #include <public/pv-iommu.h>
 
-#define PVIOMMU_PREFIX "[PV-IOMMU]"
+#define PVIOMMU_PREFIX "[PV-IOMMU] "
 
 static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
                            struct page_info **page, int readonly)
@@ -56,22 +56,22 @@ static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
 int can_use_iommu_check(struct domain *d)
 {
     if (!iommu_enabled) {
-        printk(PVIOMMU_PREFIX " IOMMU is not enabled");
+        printk(PVIOMMU_PREFIX "IOMMU is not enabled\n");
         return 0;
     }
 
     if (!is_hardware_domain(d)) {
-        printk(PVIOMMU_PREFIX " Non-hardware domain");
+        printk(PVIOMMU_PREFIX "Non-hardware domain\n");
         return 0;
     }
 
     if (!is_iommu_enabled(d)) {
-        printk(PVIOMMU_PREFIX " IOMMU disabled for this domain.");
+        printk(PVIOMMU_PREFIX "IOMMU disabled for this domain\n");
         return 0;
     }
 
     if (paging_mode_translate(d) ) {
-        printk(PVIOMMU_PREFIX " translate paging mode is not supported");
+        printk(PVIOMMU_PREFIX "translate paging mode is not supported\n");
         return 0;
     }
 
@@ -84,6 +84,7 @@ static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
     int status = 0;
 
     status = iommu_context_alloc(d, &ctx_no, op->flags);
+    printk(PVIOMMU_PREFIX "Creating context %hu for %hu (status: %d)\n", ctx_no, d->domain_id, status);
     
     if (status < 0)
         return status;
@@ -203,6 +204,7 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
     struct pv_iommu_op op;
     struct domain *d = current->domain;
 
+    printk(PVIOMMU_PREFIX "Did IOMMU hypercall from %d (count %u)\n", d->domain_id, count);
 
     if (count == 0)
         return -EINVAL;
