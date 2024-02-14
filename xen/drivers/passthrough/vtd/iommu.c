@@ -3126,6 +3126,11 @@ static void vtd_dump_page_table_level(paddr_t pt_maddr, int level, paddr_t gpa,
     if ( level < 1 )
         return;
 
+    if (pt_maddr == 0) {
+        printk(" (empty)");
+        return;
+    }
+
     pt_vaddr = map_vtd_domain_page(pt_maddr);
 
     next_level = level - 1;
@@ -3309,6 +3314,7 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
 
 static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
+    ctx->arch.vtd.pgd_maddr = 0;
     return arch_iommu_context_init(d, ctx, flags);
 }
 
