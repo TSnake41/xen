@@ -455,23 +455,6 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
             rc = rangeset_remove_range(map, PFN_DOWN(entry.addr),
                                        PFN_DOWN(entry.addr + entry.size - 1));
             if ( rc )
-                printk(XENLOG_WARNING
-                       "%pd: identity mapping of %lx failed: %d\n",
-                       d, pfn, rc);
-        }
-        else if ( pfn != start + count || perms != start_perms )
-        {
-            long rc;
-
-        commit:
-            while ( (rc = iommu_map(d, _dfn(start), _mfn(start), count,
-                                    start_perms | IOMMUF_preempt,
-                                    &map_data.flush_flags, 0)) > 0 )
-            {
-                start += rc;
-                count -= rc;
-                process_pending_softirqs();
-            }
                 panic("IOMMU failed to remove unusable memory: %d\n", rc);
             continue;
 

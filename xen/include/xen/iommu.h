@@ -372,11 +372,9 @@ struct iommu_context_list {
 
 
 struct domain_iommu {
-<<<<<<< HEAD
-#ifdef CONFIG_HAS_PASSTHROUGH
-=======
     spinlock_t lock; /* iommu lock */
->>>>>>> ba8de3553c (Move iommu context management logic to cross-vendor iommu code, add context dumping keyhandler.)
+    
+#ifdef CONFIG_HAS_PASSTHROUGH
     struct arch_iommu arch;
 #endif
 
