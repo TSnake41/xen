@@ -203,8 +203,6 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
     struct pv_iommu_op op;
     struct domain *d = current->domain;
 
-    if ( can_use_iommu_check(d) )
-        return -ENOSYS;
 
     if (count == 0)
         return -EINVAL;

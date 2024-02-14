@@ -835,13 +835,12 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
     i = find_first_zero_bit(hd->other_contexts.bitmap, hd->other_contexts.count);
 
     if (i < hd->other_contexts.count)
-        __set_bit(i, hd->other_contexts.bitmap);
-
+        set_bit(i, hd->other_contexts.bitmap);
 
     if (i >= hd->other_contexts.count) /* no free context */
         return -ENOSPC;
 
-    *ctx_no = i;
+    *ctx_no = i + 1;
 
     ret = iommu_context_init(d, iommu_get_context(d, *ctx_no), flags);
 
