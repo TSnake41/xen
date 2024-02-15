@@ -12,6 +12,7 @@
  * this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <xen/pci.h>
 #include <xen/sched.h>
 #include <xen/iommu.h>
 #include <xen/paging.h>
@@ -885,6 +886,7 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
     struct iommu_context *prev_ctx, *next_ctx;
     struct domain_iommu *hd = dom_iommu(d);
 
+    pcidevs_lock();
     spin_lock(&hd->lock);
     prev_ctx_no = dev->context;
 
@@ -912,6 +914,7 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
 
     iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
     spin_unlock(&hd->lock);
+    pcidevs_unlock();
 
     return 0;
 }
