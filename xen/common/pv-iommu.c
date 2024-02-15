@@ -168,6 +168,24 @@ static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
     return 0;
 }
 
+static long lookup_page_op(struct pv_iommu_op *op, struct domain *d)
+{
+    mfn_t mfn;
+    gfn_t gfn;
+    unsigned int flags = 0;
+
+    /* Check if there is a valid BFN mapping for this domain */
+    if ( iommu_lookup_page(d, _dfn(op->lookup_page.dfn), &mfn, &flags, op->ctx_no) )
+        return -ENOENT;
+    
+    gfn = mfn_to_gfn(d, mfn);
+    BUG_ON(gfn_eq(gfn, INVALID_GFN));
+
+    op->lookup_page.gfn = gfn_x(gfn);
+
+    return 0;
+}
+
 long do_iommu_sub_op(struct pv_iommu_op *op)
 {
     struct domain *d = current->domain;
@@ -191,6 +209,9 @@ long do_iommu_sub_op(struct pv_iommu_op *op)
         
         case IOMMUOP_unmap_page:
             return unmap_page_op(op, d);
+
+        case IOMMUOP_lookup_page:
+            return lookup_page_op(op, d);
         
         default:
             return -EINVAL;

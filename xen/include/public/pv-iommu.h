@@ -47,6 +47,11 @@
 #define IOMMUOP_map_page              5
 #define IOMMUOP_unmap_page            6
 
+/**
+ * Get the GFN associated to a specific DFN.
+ */
+#define IOMMUOP_lookup_page           7
+
 struct pv_iommu_op {
     uint16_t subop_id;
     uint16_t ctx_no;
@@ -74,6 +79,11 @@ struct pv_iommu_op {
         struct {
             struct physdev_pci_device dev;
         } reattach_device;
+
+        struct {
+            uint64_t gfn;
+            uint64_t dfn;
+        } lookup_page;
     };
 };
 
