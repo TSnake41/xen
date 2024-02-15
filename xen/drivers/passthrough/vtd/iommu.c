@@ -1704,7 +1704,7 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
     uint16_t seg = pdev->seg, bdf;
     uint8_t bus = pdev->bus, secbus;
 
-    printk("domain_context_mapping() %hud %ddevfn %pdev %pctx\n", domain->domain_id, devfn, pdev, ctx);
+    printk("domain_context_mapping() %hud %ddevfn %pdev %pctx %lxpgd\n", domain->domain_id, devfn, pdev, ctx, pgd_maddr);
 
     /*
      * Generally we assume only devices from one node to get assigned to a
@@ -3314,7 +3314,13 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
 
 static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    ctx->arch.vtd.pgd_maddr = 0;
+    struct domain_iommu *hd = dom_iommu(d);
+    struct page_info *page;
+
+    /* Create initial context page */
+    page = iommu_alloc_pgtable(hd, ctx, 0);
+    ctx->arch.vtd.pgd_maddr = page_to_maddr(page);
+
     return arch_iommu_context_init(d, ctx, flags);
 }
 
