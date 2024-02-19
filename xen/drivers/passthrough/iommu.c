@@ -892,10 +892,14 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
 
     if (ctx_no == prev_ctx_no) {
         printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu is no-op", &dev, ctx_no);
+        spin_unlock(&hd->lock);
+        pcidevs_unlock();
         return 0;
     }
 
     if (!iommu_check_context(d, ctx_no)) {
+        spin_unlock(&hd->lock);
+        pcidevs_unlock();
         return -ENOENT;
     }
 
