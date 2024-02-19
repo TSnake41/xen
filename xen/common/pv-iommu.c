@@ -72,7 +72,7 @@ int can_use_iommu_check(struct domain *d)
 
     if (paging_mode_translate(d) ) {
         printk(PVIOMMU_PREFIX "translate paging mode is not supported\n");
-        return 0;
+        //return 0;
     }
 
     return 1;
