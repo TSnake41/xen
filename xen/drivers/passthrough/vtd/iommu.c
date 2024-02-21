@@ -1569,7 +1569,7 @@ int domain_context_mapping_one(
         context_set_fault_enable(lctxt);
         context_set_present(lctxt);
     }
-    else if ( prev_dom == domain )
+    else if ( prev_dom == domain && !(mode & REMAP_SAME_DOMAIN)  )
     {
         ASSERT(lctxt.full == context->full);
         rc = !!pdev;
@@ -1693,7 +1693,8 @@ static const struct acpi_drhd_unit *domain_context_unmap(
     struct domain *d, uint8_t devfn, struct pci_dev *pdev);
 
 static int domain_context_mapping(struct domain *domain, u8 devfn,
-                                  struct pci_dev *pdev, struct iommu_context *ctx)
+                                  struct pci_dev *pdev, struct iommu_context *ctx,
+                                  bool remap_same_domain)
 {
     const struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
     const struct acpi_rmrr_unit *rmrr;
@@ -1706,6 +1707,8 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
 
     printk("domain_context_mapping() %hud %ddevfn %pdev %pctx %lxpgd\n", domain->domain_id, devfn, pdev, ctx, pgd_maddr);
 
+    if (remap_same_domain)
+        mode |= REMAP_SAME_DOMAIN;
     /*
      * Generally we assume only devices from one node to get assigned to a
      * given guest.  But even if not, by replacing the prior value here we
@@ -1728,7 +1731,7 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
         break;
     }
 
-    if ( domain != pdev->domain && pdev->domain != dom_io )
+    if ( remap_same_domain || (domain != pdev->domain && pdev->domain != dom_io) )
     {
         if ( pdev->domain->is_dying )
             mode |= MAP_OWNER_DYING;
@@ -1852,7 +1855,7 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
             if ( !prev_present )
                 domain_context_unmap(domain, devfn, pdev);
             else if ( pdev->domain != domain ) /* Avoid infinite recursion. */
-                domain_context_mapping(pdev->domain, devfn, pdev, ctx);
+                domain_context_mapping(pdev->domain, devfn, pdev, ctx, remap_same_domain);
         }
 
         break;
@@ -2373,7 +2376,7 @@ static int cf_check intel_iommu_add_device(u8 devfn, struct pci_dev *pdev, struc
         }
     }
 
-    ret = domain_context_mapping(pdev->domain, devfn, pdev, ctx);
+    ret = domain_context_mapping(pdev->domain, devfn, pdev, ctx, false);
     if ( ret )
         dprintk(XENLOG_ERR VTDPREFIX, "%pd: context mapping failed\n",
                 pdev->domain);
@@ -2443,7 +2446,7 @@ static int __hwdom_init cf_check setup_hwdom_device(
     pdev->context = 0;
     list_add(&pdev->context_list, &ctx->devices);
 
-    return domain_context_mapping(pdev->domain, devfn, pdev, ctx);
+    return domain_context_mapping(pdev->domain, devfn, pdev, ctx, false);
 }
 
 void clear_fault_bits(struct vtd_iommu *iommu)
@@ -2839,7 +2842,7 @@ static int cf_check reassign_device_ownership(
             untrusted_msi = true;
 #endif
 
-        ret = domain_context_mapping(target, devfn, pdev, iommu_default_context(target));
+        ret = domain_context_mapping(target, devfn, pdev, iommu_default_context(target), false);
 
         if ( !ret && pdev->devfn == devfn &&
              !QUARANTINE_SKIP(source, pdev->arch.vtd.pgd_maddr) )
@@ -3314,12 +3317,12 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
 
 static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    struct domain_iommu *hd = dom_iommu(d);
-    struct page_info *page;
-
     /* Create initial context page */
-    page = iommu_alloc_pgtable(hd, ctx, 0);
-    ctx->arch.vtd.pgd_maddr = page_to_maddr(page);
+    if (!(flags & IOMMU_CONTEXT_INIT_default)) {
+        addr_to_dma_page_maddr(d, ctx, 0, min_pt_levels, NULL, true);
+    } else {
+        ctx->arch.vtd.pgd_maddr = 0;
+    }
 
     return arch_iommu_context_init(d, ctx, flags);
 }
@@ -3334,7 +3337,7 @@ static int intel_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_d
     if (!pdev)
         return -EINVAL;
     
-    return domain_context_mapping(d, devfn, pdev, ctx);
+    return domain_context_mapping(d, devfn, pdev, ctx, true);
 }
 
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {

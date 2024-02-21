@@ -263,7 +263,7 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
         hd->other_contexts.map = NULL;
     }
 
-    iommu_context_init(d, &hd->default_ctx, 0);
+    iommu_context_init(d, &hd->default_ctx, 0, IOMMU_CONTEXT_INIT_default);
 
     return 0;
 }
@@ -793,12 +793,13 @@ int __init iommu_get_extra_reserved_device_memory(iommu_grdm_t *func,
     return 0;
 }
 
-int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
+int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags)
 {
     if (!dom_iommu(d)->platform_ops->context_init)
         return -ENOSYS;
 
     INIT_LIST_HEAD(&ctx->devices);
+    ctx->id = ctx_no;
 
     return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
 }
@@ -847,7 +848,7 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
 
     *ctx_no = i + 1;
 
-    ret = iommu_context_init(d, iommu_get_context(d, *ctx_no), flags);
+    ret = iommu_context_init(d, iommu_get_context(d, *ctx_no), *ctx_no, flags);
 
     if (ret)
         __clear_bit(*ctx_no, hd->other_contexts.bitmap);
@@ -885,6 +886,7 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
     device_t *ctx_dev;
     struct iommu_context *prev_ctx, *next_ctx;
     struct domain_iommu *hd = dom_iommu(d);
+    int ret;
 
     pcidevs_lock();
     spin_lock(&hd->lock);
@@ -916,11 +918,12 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
         }
     }
 
-    iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
+    ret = iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
+
     spin_unlock(&hd->lock);
     pcidevs_unlock();
 
-    return 0;
+    return ret;
 }
 
 /*

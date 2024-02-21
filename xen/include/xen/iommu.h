@@ -452,7 +452,8 @@ void iommu_dev_iotlb_flush_timeout(struct domain *d, struct pci_dev *pdev);
 struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no);
 bool iommu_check_context(struct domain *d, u16 ctx_no);
 
-int iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
+#define IOMMU_CONTEXT_INIT_default 1
+int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags);
 
 #define IOMMU_TEARDOWNF_REATTACH_DEFAULT (1 << 0)
 int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
