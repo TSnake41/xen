@@ -108,7 +108,7 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
     if (!pdev)
         return !ENOENT;
 
-    return iommu_reattach_context(d, op->ctx_no, pdev, op->ctx_no);
+    return iommu_reattach_context(d, pdev->devfn, pdev, op->ctx_no);
 }
 
 static long map_page_op(struct pv_iommu_op *op, struct domain *d)
