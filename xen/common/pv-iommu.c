@@ -120,9 +120,9 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
 
     /* Lookup page struct backing gfn */
     if ( get_paged_frame(d, _gfn(op->map_page.gfn), &mfn, &page, 0) )
-        return -EPERM; // Should this be something else?
+        return -EPERM; /* Should this be something else? */
 
-    /* Check for conflict with existing BFN mappings */
+    /* Check for conflict with existing mappings */
     if ( !iommu_lookup_page(d, _dfn(op->map_page.dfn), &mfn, &flags, op->ctx_no) )
     {
         put_page(page);
@@ -149,7 +149,6 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
 
 static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
 {
-    struct page_info *page = NULL;
     mfn_t mfn;
     unsigned int flags;
     unsigned int flush_flags = 0;
@@ -158,12 +157,11 @@ static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
     if ( iommu_lookup_page(d, _dfn(op->unmap_page.dfn), &mfn, &flags, op->ctx_no) )
         return -ENOENT;
 
-    if (iommu_unmap(d, _dfn(op->unmap_page.dfn), PAGE_ORDER_4K, 0, &flush_flags, op->ctx_no))
+    if ( iommu_unmap(d, _dfn(op->unmap_page.dfn), PAGE_ORDER_4K, 0, &flush_flags, op->ctx_no) )
         return -EIO;
 
-    /* Use MFN from B2M mapping to lookup page */
-    page = mfn_to_page(mfn);
-    put_page(page);
+    /* Decrement reference counter */
+    put_page(mfn_to_page(mfn));
 
     return 0;
 }
@@ -195,6 +193,9 @@ long do_iommu_sub_op(struct pv_iommu_op *op)
 
     switch ( op->subop_id )
     {
+        case 0:
+            return 0;
+
         case IOMMUOP_alloc_context:
             return alloc_context_op(op, d);
         
