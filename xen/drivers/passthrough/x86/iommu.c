@@ -36,6 +36,7 @@
 #include <asm/pt-contig-markers.h>
 #include <asm/setup.h>
 #include <asm/iommu.h>
+#include <asm/errno.h>
 
 const struct iommu_init_ops *__initdata iommu_init_ops;
 struct iommu_ops __ro_after_init iommu_ops;
@@ -200,9 +201,10 @@ int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 fla
 
 int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    /* TODO */
-    /* page_list_empty(&ctx->pgtables); */
-
+    /* Cleanup all page tables */
+    while ( iommu_free_pgtables(d, ctx) == -ERESTART )
+        /* nothing */;
+    
     return 0;
 }
 

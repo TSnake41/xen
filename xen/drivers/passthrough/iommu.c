@@ -918,6 +918,10 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
 
     ret = iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
 
+    if (!ret)
+        dev->context = ctx_no; /* update device context*/
+
+unlock:
     spin_unlock(&hd->lock);
     pcidevs_unlock();
 
