@@ -40,13 +40,16 @@ static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
     {
         *mfn = INVALID_MFN;
         if ( p2m_is_shared(p2mt) )
-            return -EIO;
+            return -EINVAL;
         if ( p2m_is_paging(p2mt) )
         {
             p2m_mem_paging_populate(d, gfn);
             return -EIO;
         }
-        return -EIO;
+
+        
+
+        return -EPERM;
     }
     *mfn = page_to_mfn(*page);
 
@@ -84,7 +87,6 @@ static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
     int status = 0;
 
     status = iommu_context_alloc(d, &ctx_no, op->flags);
-    printk(PVIOMMU_PREFIX "Creating context %hu for %hu (status: %d)\n", ctx_no, d->domain_id, status);
     
     if (status < 0)
         return status;
@@ -113,14 +115,17 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
 
 static long map_page_op(struct pv_iommu_op *op, struct domain *d)
 {
+    int ret;
     struct page_info *page = NULL;
     mfn_t mfn;
     unsigned int flags;
     unsigned int flush_flags = 0;
 
     /* Lookup page struct backing gfn */
-    if ( get_paged_frame(d, _gfn(op->map_page.gfn), &mfn, &page, 0) )
-        return -EPERM; /* Should this be something else? */
+    ret = get_paged_frame(d, _gfn(op->map_page.gfn), &mfn, &page, 0);
+
+    if (ret)
+        return ret;
 
     /* Check for conflict with existing mappings */
     if ( !iommu_lookup_page(d, _dfn(op->map_page.dfn), &mfn, &flags, op->ctx_no) )
@@ -225,9 +230,7 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
     int i;
     struct pv_iommu_op op;
     struct domain *d = current->domain;
-
-    printk(PVIOMMU_PREFIX "Did IOMMU hypercall from %d (count %u)\n", d->domain_id, count);
-
+    
     if (count == 0)
         return -EINVAL;
 
