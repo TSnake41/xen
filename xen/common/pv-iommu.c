@@ -17,6 +17,7 @@
  * along with this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <xen/mm.h>
 #include <xen/lib.h>
 #include <xen/iommu.h>
 #include <xen/sched.h>
@@ -47,10 +48,9 @@ static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
             return -EIO;
         }
 
-        
-
         return -EPERM;
     }
+
     *mfn = page_to_mfn(*page);
 
     return 0;
@@ -142,11 +142,13 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
     if ( op->flags & IOMMU_OP_writeable )
         flags |= IOMMUF_writable;
 
-    if ( iommu_map(d, _dfn(op->map_page.dfn), mfn,
-                   PAGE_ORDER_4K, flags, &flush_flags, op->ctx_no) )
+    ret = iommu_map(d, _dfn(op->map_page.dfn), mfn, 1,
+        flags, &flush_flags, op->ctx_no);
+
+    if (ret)
     {
         put_page(page);
-        return -EIO;
+        return ret;
     }
 
     return 0;
@@ -155,6 +157,7 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
 static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
 {
     mfn_t mfn;
+    int ret;
     unsigned int flags;
     unsigned int flush_flags = 0;
 
@@ -162,8 +165,10 @@ static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
     if ( iommu_lookup_page(d, _dfn(op->unmap_page.dfn), &mfn, &flags, op->ctx_no) )
         return -ENOENT;
 
-    if ( iommu_unmap(d, _dfn(op->unmap_page.dfn), PAGE_ORDER_4K, 0, &flush_flags, op->ctx_no) )
-        return -EIO;
+    ret = iommu_unmap(d, _dfn(op->unmap_page.dfn), 1, 0, &flush_flags, op->ctx_no);
+
+    if (ret)
+        return ret;
 
     /* Decrement reference counter */
     put_page(mfn_to_page(mfn));
