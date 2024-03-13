@@ -804,31 +804,6 @@ int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, 
     return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
 }
 
-int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
-{
-    struct domain_iommu *hd = dom_iommu(d);
-    int ret;
-
-    if (!dom_iommu(d)->platform_ops->context_teardown)
-        return -ENOSYS;
-
-    /* first reattach devices back to default context if needed */
-    if (flags & IOMMU_TEARDOWNF_REATTACH_DEFAULT) {
-        struct pci_dev *device;
-        list_for_each_entry(device, &ctx->devices, context_list) {
-            iommu_reattach_context(d, device->devfn, device, 0);
-        }
-    } else if (!list_empty(&ctx->devices)) {
-        return -EBUSY; /* there is a device in context */
-    }
-
-    spin_lock(&hd->lock);
-    ret = iommu_call(dom_iommu(d)->platform_ops, context_teardown, d, ctx, flags);
-    spin_unlock(&hd->lock);
-
-    return ret;
-}
-
 int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
 {
     unsigned int i;
@@ -858,38 +833,14 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
     return ret;
 }
 
-int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
-{
-    int ret;
-    struct domain_iommu *hd = dom_iommu(d);
-
-    if (ctx_no == 0)
-        return -EINVAL;
-
-    spin_lock(&hd->lock);
-    if (!iommu_check_context(d, ctx_no))
-        return -ENOENT;
-
-    ret = iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
-
-    if (!ret)
-        clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
-
-    spin_unlock(&hd->lock);
-
-    return ret;
-}
-
-int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+int _iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
 {
     u16 prev_ctx_no;
     device_t *ctx_dev;
     struct iommu_context *prev_ctx, *next_ctx;
-    struct domain_iommu *hd = dom_iommu(d);
     int ret;
 
     pcidevs_lock();
-    spin_lock(&hd->lock);
     prev_ctx_no = dev->context;
 
     if (ctx_no == prev_ctx_no) {
@@ -922,8 +873,73 @@ int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no
         dev->context = ctx_no; /* update device context*/
 
 unlock:
-    spin_unlock(&hd->lock);
     pcidevs_unlock();
+    return ret;
+}
+
+int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_reattach_context(d, devfn, dev, ctx_no);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int _iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (!dom_iommu(d)->platform_ops->context_teardown)
+        return -ENOSYS;
+
+    /* first reattach devices back to default context if needed */
+    if (flags & IOMMU_TEARDOWNF_REATTACH_DEFAULT) {
+        struct pci_dev *device;
+        list_for_each_entry(device, &ctx->devices, context_list) {
+            _iommu_reattach_context(d, device->devfn, device, 0);
+        }
+    } else if (!list_empty(&ctx->devices)) {
+        return -EBUSY; /* there is a device in context */
+    }
+
+    return iommu_call(hd->platform_ops, context_teardown, d, ctx, flags);
+}
+
+int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_context_teardown(d, ctx, flags);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
+{
+    int ret;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (ctx_no == 0)
+        return -EINVAL;
+
+    spin_lock(&hd->lock);
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
+    ret = _iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
+
+    if (!ret)
+        clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
+
+    spin_unlock(&hd->lock);
+    
 
     return ret;
 }
