@@ -2113,7 +2113,6 @@ static int __must_check cf_check intel_iommu_map_page(
     if ( iommu_hwdom_passthrough && is_hardware_domain(d) && !ctx->id )
         return 0;
 
-    spin_lock(&hd->lock);
 
     /*
      * IOMMU mapping request can be safely ignored when the domain is dying.
@@ -2123,7 +2122,6 @@ static int __must_check cf_check intel_iommu_map_page(
      */
     if ( d->is_dying )
     {
-        spin_unlock(&hd->lock);
         return 0;
     }
 
@@ -2131,7 +2129,6 @@ static int __must_check cf_check intel_iommu_map_page(
                                       true);
     if ( pg_maddr < PAGE_SIZE )
     {
-        spin_unlock(&hd->lock);
         return -ENOMEM;
     }
 
@@ -2152,7 +2149,6 @@ static int __must_check cf_check intel_iommu_map_page(
 
     if ( !((old.val ^ new.val) & ~DMA_PTE_CONTIG_MASK) )
     {
-        spin_unlock(&hd->lock);
         unmap_vtd_domain_page(page);
         return 0;
     }
@@ -2195,7 +2191,6 @@ static int __must_check cf_check intel_iommu_map_page(
         perfc_incr(iommu_pt_coalesces);
     }
 
-    spin_unlock(&hd->lock);
     unmap_vtd_domain_page(page);
 
     *flush_flags |= IOMMU_FLUSHF_added;
