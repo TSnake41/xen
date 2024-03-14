@@ -3169,7 +3169,8 @@ static void cf_check vtd_dump_page_tables(struct domain *d)
     printk(VTDPREFIX" %pd table has %d levels\n", d,
            agaw_to_level(hd->arch.vtd.agaw));
 
-    for (i = 0; i < (1 + hd->other_contexts.count); ++i) {
+    for (i = 1; i < (1 + hd->other_contexts.count); ++i)
+    {
         bool allocated = iommu_check_context(d, i);
         printk(VTDPREFIX " %pd context %d: %s\n", d, i,
                allocated ? "allocated" : "non-allocated");
