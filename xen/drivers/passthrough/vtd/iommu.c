@@ -3333,10 +3333,44 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
 
 static int intel_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_dev *pdev, struct iommu_context *ctx)
 {
+    unsigned int idx, bdf, flush_flags;
+    int ret;
+    u64 addr, pfn;
+    const struct acpi_rmrr_unit *rmrr;
+
     if (!pdev)
         return -EINVAL;
     
-    return domain_context_mapping(d, devfn, pdev, ctx, true);
+    ret = domain_context_mapping(d, devfn, pdev, ctx, true);
+
+    if (ret)
+        return ret;
+
+    /* Add identity mappings to context */
+    for_each_rmrr_device(rmrr, bdf, idx)
+    {
+        if ( rmrr->segment == pdev->seg && bdf == pdev->sbdf.bdf )
+        {
+            printk(XENLOG_INFO VTDPREFIX
+                   "%pp d%huc%hu: Applying identity mapping [%016lx:%016lx]\n",
+                   &pdev->sbdf, d->domain_id, ctx->id, rmrr->base_address, rmrr->end_address);
+            
+            for (addr = rmrr->base_address; addr < rmrr->end_address; addr += PAGE_SIZE)
+            {
+                pfn = paddr_to_pfn(addr);
+
+                ret = intel_iommu_map_page(d, _dfn(pfn), _mfn(pfn), IOMMUF_readable | IOMMUF_writable,
+                                           &flush_flags, ctx);
+                
+                if ( ret )
+                    printk(XENLOG_ERR VTDPREFIX
+                           "%pp: RMRR page mapping failed %d\n",
+                           &pdev->sbdf, ret);
+            }
+        }
+    }
+
+    return 0;
 }
 
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
