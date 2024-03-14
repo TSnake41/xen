@@ -795,7 +795,7 @@ int __init iommu_get_extra_reserved_device_memory(iommu_grdm_t *func,
 
 int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags)
 {
-    if (!dom_iommu(d)->platform_ops->context_init)
+    if ( !dom_iommu(d)->platform_ops->context_init )
         return -ENOSYS;
 
     INIT_LIST_HEAD(&ctx->devices);
@@ -815,17 +815,17 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
     /* TODO: use TSL instead ? */
     i = find_first_zero_bit(hd->other_contexts.bitmap, hd->other_contexts.count);
 
-    if (i < hd->other_contexts.count)
+    if ( i < hd->other_contexts.count )
         set_bit(i, hd->other_contexts.bitmap);
 
-    if (i >= hd->other_contexts.count) /* no free context */
+    if ( i >= hd->other_contexts.count ) /* no free context */
         return -ENOSPC;
 
     *ctx_no = i + 1;
 
     ret = iommu_context_init(d, iommu_get_context(d, *ctx_no), *ctx_no, flags);
 
-    if (ret)
+    if ( ret )
         __clear_bit(*ctx_no, hd->other_contexts.bitmap);
 
     spin_unlock(&hd->lock);
@@ -843,13 +843,15 @@ int _iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_n
     pcidevs_lock();
     prev_ctx_no = dev->context;
 
-    if (ctx_no == prev_ctx_no) {
-        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu is no-op\n", &dev, ctx_no);
+    if ( ctx_no == prev_ctx_no )
+    {
+        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu\n", &dev, ctx_no);
         ret = 0;
         goto unlock;
     }
 
-    if (!iommu_check_context(d, ctx_no)) {
+    if ( !iommu_check_context(d, ctx_no) )
+    {
         ret = -ENOENT;
         goto unlock;
     }
@@ -859,8 +861,10 @@ int _iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_n
     prev_ctx = iommu_get_context(d, prev_ctx_no);
     next_ctx = iommu_get_context(d, ctx_no);
 
-    list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list) {
-        if (ctx_dev == dev) {
+    list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list)
+    {
+        if ( ctx_dev == dev )
+        {
             list_del(&ctx_dev->context_list);
             list_add(&ctx_dev->context_list, &next_ctx->devices);
             break;
@@ -893,16 +897,20 @@ int _iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 fla
 {
     struct domain_iommu *hd = dom_iommu(d);
 
-    if (!dom_iommu(d)->platform_ops->context_teardown)
+    if ( !dom_iommu(d)->platform_ops->context_teardown )
         return -ENOSYS;
 
     /* first reattach devices back to default context if needed */
-    if (flags & IOMMU_TEARDOWNF_REATTACH_DEFAULT) {
+    if ( flags & IOMMU_TEARDOWNF_REATTACH_DEFAULT )
+    {
         struct pci_dev *device;
-        list_for_each_entry(device, &ctx->devices, context_list) {
+        list_for_each_entry(device, &ctx->devices, context_list)
+        {
             _iommu_reattach_context(d, device->devfn, device, 0);
         }
-    } else if (!list_empty(&ctx->devices)) {
+    }
+    else if (!list_empty(&ctx->devices))
+    {
         return -EBUSY; /* there is a device in context */
     }
 
@@ -939,7 +947,6 @@ int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
         clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
 
     spin_unlock(&hd->lock);
-    
 
     return ret;
 }

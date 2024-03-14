@@ -58,24 +58,22 @@ static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
 
 int can_use_iommu_check(struct domain *d)
 {
-    if (!iommu_enabled) {
+    if ( !iommu_enabled )
+    {
         printk(PVIOMMU_PREFIX "IOMMU is not enabled\n");
         return 0;
     }
 
-    if (!is_hardware_domain(d)) {
+    if ( !is_hardware_domain(d) )
+    {
         printk(PVIOMMU_PREFIX "Non-hardware domain\n");
         return 0;
     }
 
-    if (!is_iommu_enabled(d)) {
+    if ( !is_iommu_enabled(d) )
+    {
         printk(PVIOMMU_PREFIX "IOMMU disabled for this domain\n");
         return 0;
-    }
-
-    if (paging_mode_translate(d) ) {
-        printk(PVIOMMU_PREFIX "translate paging mode is not supported\n");
-        //return 0;
     }
 
     return 1;
@@ -107,7 +105,7 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
 
     pdev = pci_get_pdev(d, PCI_SBDF(dev->seg, dev->bus, dev->devfn));
 
-    if (!pdev)
+    if ( !pdev )
         return !ENOENT;
 
     return iommu_reattach_context(d, pdev->devfn, pdev, op->ctx_no);
@@ -145,7 +143,7 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
     ret = iommu_map(d, _dfn(op->map_page.dfn), mfn, 1,
         flags, &flush_flags, op->ctx_no);
 
-    if (ret)
+    if ( ret )
     {
         put_page(page);
         return ret;
@@ -198,7 +196,7 @@ long do_iommu_sub_op(struct pv_iommu_op *op)
 {
     struct domain *d = current->domain;
 
-    if (!can_use_iommu_check(d))
+    if ( !can_use_iommu_check(d) )
         return -EPERM;
 
     switch ( op->subop_id )
@@ -236,7 +234,7 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
     struct pv_iommu_op op;
     struct domain *d = current->domain;
     
-    if (count == 0)
+    if ( count == 0 )
         return -EINVAL;
 
     if ( count > 1 )

@@ -36,7 +36,6 @@
 #include <asm/pt-contig-markers.h>
 #include <asm/setup.h>
 #include <asm/iommu.h>
-#include <asm/errno.h>
 
 const struct iommu_init_ops *__initdata iommu_init_ops;
 struct iommu_ops __ro_after_init iommu_ops;

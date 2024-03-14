@@ -42,6 +42,7 @@
 #include <asm/p2m.h>
 #include <asm/bitops.h>
 #include <asm/iommu.h>
+#include <asm/page.h>
 #include <mach_apic.h>
 #include "iommu.h"
 #include "dmar.h"
@@ -2655,12 +2656,15 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
 
     spin_lock(&hd->lock);
 
-    for (i = 0; i < (1 + dom_iommu(d)->other_contexts.count); ++i) {
-        if (iommu_check_context(d, i)) {
+    for (i = 0; i < (1 + dom_iommu(d)->other_contexts.count); ++i)
+    {
+        if (iommu_check_context(d, i))
+        {
             printk(" Context %d\n", i);
             ctx = iommu_get_context(d, i);
 
-            list_for_each_entry(pdev, &ctx->devices, context_list) {
+            list_for_each_entry(pdev, &ctx->devices, context_list)
+            {
                 printk("  - %pp\n", &pdev->sbdf);
             }
         }
@@ -3317,12 +3321,11 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
 
 static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    /* Create initial context page */
-    if (!(flags & IOMMU_CONTEXT_INIT_default)) {
+    if (!(flags & IOMMU_CONTEXT_INIT_default))
+        /* Create initial context page */
         addr_to_dma_page_maddr(d, ctx, 0, min_pt_levels, NULL, true);
-    } else {
+    else
         ctx->arch.vtd.pgd_maddr = 0;
-    }
 
     return arch_iommu_context_init(d, ctx, flags);
 }
