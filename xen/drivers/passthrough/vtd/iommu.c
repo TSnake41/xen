@@ -2230,21 +2230,16 @@ static int __must_check cf_check intel_iommu_unmap_page(
     if ( iommu_hwdom_passthrough && is_hardware_domain(d) )
         return 0;
 
-    spin_lock(&hd->lock);
     /* get target level pte */
     pg_maddr = addr_to_dma_page_maddr(d, ctx, addr, level, flush_flags, false);
     if ( pg_maddr < PAGE_SIZE )
-    {
-        spin_unlock(&hd->lock);
         return pg_maddr ? -ENOMEM : 0;
-    }
 
     page = map_vtd_domain_page(pg_maddr);
     pte = &page[address_level_offset(addr, level)];
 
     if ( !dma_pte_present(*pte) )
     {
-        spin_unlock(&hd->lock);
         unmap_vtd_domain_page(page);
         return 0;
     }
@@ -2275,8 +2270,6 @@ static int __must_check cf_check intel_iommu_unmap_page(
         perfc_incr(iommu_pt_coalesces);
     }
 
-    spin_unlock(&hd->lock);
-
     unmap_vtd_domain_page(page);
 
     *flush_flags |= IOMMU_FLUSHF_modified;
@@ -2293,7 +2286,6 @@ static int cf_check intel_iommu_lookup_page(
     struct iommu_context *ctx)
 {
     uint64_t val;
-    struct domain_iommu *hd = dom_iommu(d);
 
     /*
      * If VT-d shares EPT page table or if the domain is the hardware
@@ -2303,11 +2295,8 @@ static int cf_check intel_iommu_lookup_page(
          (iommu_hwdom_passthrough && is_hardware_domain(d)) )
         return -EOPNOTSUPP;
 
-    spin_lock(&hd->lock);
 
     val = addr_to_dma_page_maddr(d, ctx, dfn_to_daddr(dfn), 0, NULL, false);
-
-    spin_unlock(&hd->lock);
 
     if ( val < PAGE_SIZE )
         return -ENOENT;
