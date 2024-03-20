@@ -12,6 +12,7 @@
  * this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <xen/pci.h>
 #include <xen/sched.h>
 #include <xen/iommu.h>
 #include <xen/paging.h>
@@ -21,6 +22,10 @@
 #include <xen/softirq.h>
 #include <xen/keyhandler.h>
 #include <xsm/xsm.h>
+#include <asm/iommu.h>
+#include <asm/bitops.h>
+#include <asm/device.h>
+#include <xen/spinlock.h>
 
 unsigned int __read_mostly iommu_dev_iotlb_timeout = 1000;
 integer_param("iommu_dev_iotlb_timeout", iommu_dev_iotlb_timeout);
@@ -56,6 +61,8 @@ int8_t __hwdom_initdata iommu_hwdom_reserved = -1;
 #ifndef iommu_hap_pt_share
 bool __read_mostly iommu_hap_pt_share = true;
 #endif
+
+uint16_t __read_mostly iommu_hwdom_nb_ctx = 8;
 
 bool __read_mostly iommu_debug;
 
@@ -152,6 +159,7 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
     int rc = 0;
 
     do {
+        long long nb_ctx;
         int val;
 
         ss = strchr(s, ',');
@@ -168,7 +176,12 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
             iommu_hwdom_reserved = val;
         else if ( !cmdline_strcmp(s, "none") )
             iommu_hwdom_none = true;
-        else
+        else if ( !parse_signed_integer("nb-ctx", s, ss, &nb_ctx) ) {
+            if (nb_ctx > 0 && nb_ctx < UINT16_MAX)
+                iommu_hwdom_nb_ctx = nb_ctx;
+            else 
+                printk(XENLOG_INFO "'nb-ctx=%lld' value out of range!\n", nb_ctx);
+        } else
             rc = -EINVAL;
 
         s = ss + 1;
@@ -192,6 +205,7 @@ static void __hwdom_init check_hwdom_reqs(struct domain *d)
 int iommu_domain_init(struct domain *d, unsigned int opts)
 {
     struct domain_iommu *hd = dom_iommu(d);
+    uint16_t other_context_count;
     int ret = 0;
 
     if ( is_hardware_domain(d) )
@@ -231,6 +245,25 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
         hd->need_sync = !iommu_use_hap_pt(d);
 
     ASSERT(!(hd->need_sync && hd->hap_pt_share));
+
+    if (is_hardware_domain(d)) {
+        BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
+        printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
+        hd->other_contexts.count = iommu_hwdom_nb_ctx - 1;
+    } else
+        hd->other_contexts.count = 0;
+
+    other_context_count = hd->other_contexts.count;
+    if (other_context_count > 0) {
+        /* Initialize context bitmap */
+        hd->other_contexts.bitmap = xzalloc_array(unsigned long, BITS_TO_LONGS(other_context_count));
+        hd->other_contexts.map = xzalloc_array(struct iommu_context, other_context_count);
+    } else {
+        hd->other_contexts.bitmap = NULL;
+        hd->other_contexts.map = NULL;
+    }
+
+    iommu_context_init(d, &hd->default_ctx, 0, IOMMU_CONTEXT_INIT_default);
 
     return 0;
 }
@@ -319,6 +352,32 @@ static unsigned int mapping_order(const struct domain_iommu *hd,
     }
 
     return order;
+}
+
+
+bool iommu_check_context(struct domain *d, u16 ctx_no) {
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (ctx_no == 0)
+        return 1; /* Default context always exist. */
+    
+    if ((ctx_no - 1) >= hd->other_contexts.count)
+        return 0; /* out of bounds */
+
+    return test_bit(ctx_no - 1, hd->other_contexts.bitmap);
+}
+
+struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (!iommu_check_context(d, ctx_no)) {
+        return NULL;
+    }
+
+    if (ctx_no == 0)
+        return &hd->default_ctx;
+    else
+        return &hd->other_contexts.map[ctx_no - 1];
 }
 
 long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
@@ -721,6 +780,89 @@ int __init iommu_get_extra_reserved_device_memory(iommu_grdm_t *func,
     }
 
     return 0;
+}
+
+int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags)
+{
+    if ( !dom_iommu(d)->platform_ops->context_init )
+        return -ENOSYS;
+
+    INIT_LIST_HEAD(&ctx->devices);
+    ctx->id = ctx_no;
+
+    return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
+}
+
+int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
+{
+    unsigned int i;
+    int ret;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    spin_lock(&hd->lock);
+
+    /* TODO: use TSL instead ? */
+    i = find_first_zero_bit(hd->other_contexts.bitmap, hd->other_contexts.count);
+
+    if ( i < hd->other_contexts.count )
+        set_bit(i, hd->other_contexts.bitmap);
+
+    if ( i >= hd->other_contexts.count ) /* no free context */
+        return -ENOSPC;
+
+    *ctx_no = i + 1;
+
+    ret = iommu_context_init(d, iommu_get_context(d, *ctx_no), *ctx_no, flags);
+
+    if ( ret )
+        __clear_bit(*ctx_no, hd->other_contexts.bitmap);
+
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+int _iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if ( !dom_iommu(d)->platform_ops->context_teardown )
+        return -ENOSYS;
+
+    return iommu_call(hd->platform_ops, context_teardown, d, ctx, flags);
+}
+
+int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_context_teardown(d, ctx, flags);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
+{
+    int ret;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    if (ctx_no == 0)
+        return -EINVAL;
+
+    spin_lock(&hd->lock);
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
+    ret = _iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
+
+    if (!ret)
+        clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
+
+    spin_unlock(&hd->lock);
+
+    return ret;
 }
 
 /*

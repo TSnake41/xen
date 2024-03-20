@@ -111,6 +111,7 @@ extern bool amd_iommu_perdev_intremap;
 
 extern bool iommu_hwdom_strict, iommu_hwdom_passthrough, iommu_hwdom_inclusive;
 extern int8_t iommu_hwdom_reserved;
+extern uint16_t iommu_hwdom_nb_ctx;
 
 extern unsigned int iommu_dev_iotlb_timeout;
 
@@ -262,6 +263,8 @@ struct iommu_ops {
     void (*hwdom_init)(struct domain *d);
     int (*quarantine_init)(device_t *dev, bool scratch_page);
     int (*add_device)(uint8_t devfn, device_t *dev);
+    int (*context_init)(struct domain *d, struct iommu_context *ctx, u32 flags);
+    int (*context_teardown)(struct domain *d, struct iommu_context *ctx, u32 flags);
     int (*enable_device)(device_t *dev);
     int (*remove_device)(uint8_t devfn, device_t *dev);
     int (*assign_device)(struct domain *d, uint8_t devfn, device_t *dev,
@@ -438,6 +441,17 @@ int iommu_do_pci_domctl(struct xen_domctl *domctl, struct domain *d,
 #endif
 
 void iommu_dev_iotlb_flush_timeout(struct domain *d, struct pci_dev *pdev);
+
+struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no);
+bool iommu_check_context(struct domain *d, u16 ctx_no);
+
+#define IOMMU_CONTEXT_INIT_default 1
+int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags);
+
+int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
+
+int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);
+int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags);
 
 /*
  * The purpose of the iommu_dont_flush_iotlb optional cpu flag is to
