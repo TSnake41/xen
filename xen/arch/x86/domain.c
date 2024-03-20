@@ -61,6 +61,7 @@
 #include <asm/nmi.h>
 #include <asm/mce.h>
 #include <asm/amd.h>
+#include <asm/iommu.h>
 #include <xen/numa.h>
 #include <xen/iommu.h>
 #ifdef CONFIG_COMPAT
@@ -2356,7 +2357,8 @@ int domain_relinquish_resources(struct domain *d)
         d->arch.rel_priv = PROG_ ## x; /* Fallthrough */ case PROG_ ## x
 
         enum {
-            PROG_iommu_pagetables = 1,
+            PROG_iommu = 0,
+            PROG_pci = 1,
             PROG_shared,
             PROG_paging,
             PROG_vcpu_pagetables,
@@ -2367,14 +2369,13 @@ int domain_relinquish_resources(struct domain *d)
             PROG_done,
         };
 
-    case 0:
+    case PROG_iommu:
+    
+        arch_iommu_domain_destroy(d);
+
+    PROGRESS(pci):
+
         ret = pci_release_devices(d);
-        if ( ret )
-            return ret;
-
-    PROGRESS(iommu_pagetables):
-
-        ret = iommu_free_pgtables(d);
         if ( ret )
             return ret;
 
