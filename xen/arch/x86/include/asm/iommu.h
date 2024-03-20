@@ -2,10 +2,12 @@
 #ifndef __ARCH_X86_IOMMU_H__
 #define __ARCH_X86_IOMMU_H__
 
+#include <xen/bitmap.h>
 #include <xen/errno.h>
 #include <xen/list.h>
 #include <xen/mem_access.h>
 #include <xen/spinlock.h>
+#include <xen/stdbool.h>
 #include <asm/apicdef.h>
 #include <asm/cache.h>
 #include <asm/processor.h>
@@ -31,6 +33,23 @@ typedef uint64_t daddr_t;
 #define dfn_to_daddr(dfn) __dfn_to_daddr(dfn_x(dfn))
 #define daddr_to_dfn(daddr) _dfn(__daddr_to_dfn(daddr))
 
+struct arch_iommu_context
+{
+    spinlock_t pgtables_lock;
+    struct page_list_head pgtables;
+
+    union {
+        /* Intel VT-d */
+        struct {
+            uint64_t pgd_maddr; /* io page directory machine address */
+        } vtd;
+        /* AMD IOMMU */
+        struct {
+            struct page_info *root_table;
+        } amd;
+    };
+};
+
 struct arch_iommu
 {
     spinlock_t mapping_lock; /* io page table lock */
@@ -44,14 +63,13 @@ struct arch_iommu
     union {
         /* Intel VT-d */
         struct {
-            uint64_t pgd_maddr; /* io page directory machine address */
-            unsigned int agaw; /* adjusted guest address width, 0 is level 2 30-bit */
             unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the domain uses */
+            unsigned int agaw; /* adjusted guest address width, 0 is level 2 30-bit */
         } vtd;
         /* AMD IOMMU */
         struct {
             unsigned int paging_mode;
-            struct page_info *root_table;
+            struct guest_iommu *g_iommu;
         } amd;
     };
 };
@@ -128,14 +146,18 @@ unsigned long *iommu_init_domid(domid_t reserve);
 domid_t iommu_alloc_domid(unsigned long *map);
 void iommu_free_domid(domid_t domid, unsigned long *map);
 
-int __must_check iommu_free_pgtables(struct domain *d);
+struct iommu_context;
+int __must_check iommu_free_pgtables(struct domain *d, struct iommu_context *ctx);
 struct domain_iommu;
 struct page_info *__must_check iommu_alloc_pgtable(struct domain_iommu *hd,
+                                                   struct iommu_context *ctx,
                                                    uint64_t contig_mask);
-void iommu_queue_free_pgtable(struct domain_iommu *hd, struct page_info *pg);
+void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg);
 
 /* Check [start, end] unity map range for correctness. */
 bool iommu_unity_region_ok(const char *prefix, mfn_t start, mfn_t end);
+int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
+int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
 
 #endif /* !__ARCH_X86_IOMMU_H__ */
 /*
