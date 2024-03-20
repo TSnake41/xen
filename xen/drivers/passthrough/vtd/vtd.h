@@ -31,6 +31,7 @@
 #define MAP_SINGLE_DEVICE     (1u << 2)
 #define MAP_ERROR_RECOVERY    (1u << 3)
 #define UNMAP_ME_PHANTOM_FUNC (1u << 4)
+#define REMAP_SAME_DOMAIN     (1u << 5)
 
 /* Allow for both IOAPIC and IOSAPIC. */
 #define IO_xAPIC_route_entry IO_APIC_route_entry

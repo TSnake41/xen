@@ -1691,7 +1691,8 @@ static const struct acpi_drhd_unit *domain_context_unmap(
     struct domain *d, uint8_t devfn, struct pci_dev *pdev);
 
 static int domain_context_mapping(struct domain *domain, u8 devfn,
-                                  struct pci_dev *pdev, struct iommu_context *ctx)
+                                  struct pci_dev *pdev, struct iommu_context *ctx,
+                                  bool remap_same_domain)
 {
     const struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
     const struct acpi_rmrr_unit *rmrr;
@@ -1702,6 +1703,9 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
     uint16_t seg = pdev->seg, bdf;
     uint8_t bus = pdev->bus, secbus;
 
+
+    if (remap_same_domain)
+        mode |= REMAP_SAME_DOMAIN;
     /*
      * Generally we assume only devices from one node to get assigned to a
      * given guest.  But even if not, by replacing the prior value here we
@@ -1724,7 +1728,7 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
         break;
     }
 
-    if ( domain != pdev->domain && pdev->domain != dom_io )
+    if ( remap_same_domain || (domain != pdev->domain && pdev->domain != dom_io) )
     {
         if ( pdev->domain->is_dying )
             mode |= MAP_OWNER_DYING;
@@ -1848,7 +1852,7 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
             if ( !prev_present )
                 domain_context_unmap(domain, devfn, pdev);
             else if ( pdev->domain != domain ) /* Avoid infinite recursion. */
-                domain_context_mapping(pdev->domain, devfn, pdev);
+                domain_context_mapping(pdev->domain, devfn, pdev, ctx, remap_same_domain);
         }
 
         break;
@@ -3257,6 +3261,49 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
 {
     return arch_iommu_context_teardown(d, ctx, flags);
 }
+
+static int intel_iommu_reattach_context(struct domain *d, u8 devfn, struct pci_dev *pdev, struct iommu_context *ctx)
+{
+    unsigned int idx, bdf, flush_flags;
+    int ret;
+    u64 addr, pfn;
+    const struct acpi_rmrr_unit *rmrr;
+
+    if (!pdev)
+        return -EINVAL;
+    
+    ret = domain_context_mapping(d, devfn, pdev, ctx, true);
+
+    if (ret)
+        return ret;
+
+    /* Add identity mappings to context */
+    for_each_rmrr_device(rmrr, bdf, idx)
+    {
+        if ( rmrr->segment == pdev->seg && bdf == pdev->sbdf.bdf )
+        {
+            printk(XENLOG_INFO VTDPREFIX
+                   "%pp d%huc%hu: Applying identity mapping [%016lx:%016lx]\n",
+                   &pdev->sbdf, d->domain_id, ctx->id, rmrr->base_address, rmrr->end_address);
+            
+            for (addr = rmrr->base_address; addr < rmrr->end_address; addr += PAGE_SIZE)
+            {
+                pfn = paddr_to_pfn(addr);
+
+                ret = intel_iommu_map_page(d, _dfn(pfn), _mfn(pfn), IOMMUF_readable | IOMMUF_writable,
+                                           &flush_flags, ctx);
+                
+                if ( ret )
+                    printk(XENLOG_ERR VTDPREFIX
+                           "%pp: RMRR page mapping failed %d\n",
+                           &pdev->sbdf, ret);
+            }
+        }
+    }
+
+    return 0;
+}
+
 static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
     .page_sizes = PAGE_SIZE_4K,
     .init = intel_iommu_domain_init,
@@ -3264,6 +3311,7 @@ static const struct iommu_ops __initconst_cf_clobber vtd_ops = {
     .quarantine_init = intel_iommu_quarantine_init,
     .context_init = intel_iommu_context_init,
     .context_teardown = intel_iommu_context_teardown,
+    .reattach_context = intel_iommu_reattach_context,
     .add_device = intel_iommu_add_device,
     .enable_device = intel_iommu_enable_device,
     .remove_device = intel_iommu_remove_device,
