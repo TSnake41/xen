@@ -382,15 +382,18 @@ struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
 
 long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                unsigned long page_count, unsigned int flags,
-               unsigned int *flush_flags)
+               unsigned int *flush_flags, u16 ctx_no)
 {
-    const struct domain_iommu *hd = dom_iommu(d);
+    struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
     unsigned int order, j = 0;
     int rc = 0;
 
     if ( !is_iommu_enabled(d) )
         return 0;
+
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
 
     ASSERT(!IOMMUF_order(flags));
 
@@ -407,7 +410,8 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
             return i;
 
         rc = iommu_call(hd->platform_ops, map_page, d, dfn, mfn,
-                        flags | IOMMUF_order(order), flush_flags);
+                        flags | IOMMUF_order(order), flush_flags,
+                        iommu_get_context(d, ctx_no));
 
         if ( likely(!rc) )
             continue;
@@ -418,7 +422,7 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                    d->domain_id, dfn_x(dfn), mfn_x(mfn), rc);
 
         /* while statement to satisfy __must_check */
-        while ( iommu_unmap(d, dfn0, i, 0, flush_flags) )
+        while ( iommu_unmap(d, dfn0, i, 0, flush_flags, ctx_no) )
             break;
 
         if ( !is_hardware_domain(d) )
@@ -445,7 +449,7 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
     int rc;
 
     ASSERT(!(flags & IOMMUF_preempt));
-    rc = iommu_map(d, dfn, mfn, page_count, flags, &flush_flags);
+    rc = iommu_map(d, dfn, mfn, page_count, flags, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
         rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags);
@@ -454,9 +458,10 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
 }
 
 long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
-                 unsigned int flags, unsigned int *flush_flags)
+                 unsigned int flags, unsigned int *flush_flags,
+                 u16 ctx_no)
 {
-    const struct domain_iommu *hd = dom_iommu(d);
+    struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
     unsigned int order, j = 0;
     int rc = 0;
@@ -464,7 +469,11 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
     if ( !is_iommu_enabled(d) )
         return 0;
 
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
     ASSERT(!(flags & ~IOMMUF_preempt));
+    spin_lock(&hd->lock);
 
     for ( i = 0; i < page_count; i += 1UL << order )
     {
@@ -476,10 +485,14 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
         if ( (flags & IOMMUF_preempt) &&
              ((!(++j & 0xfff) && general_preempt_check()) ||
               i > LONG_MAX - (1UL << order)) )
+        {
+            spin_unlock(&hd->lock);
             return i;
+        }
 
         err = iommu_call(hd->platform_ops, unmap_page, d, dfn,
-                         flags | IOMMUF_order(order), flush_flags);
+                         flags | IOMMUF_order(order), flush_flags,
+                         iommu_get_context(d, ctx_no));
 
         if ( likely(!err) )
             continue;
@@ -507,13 +520,14 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
          !iommu_iotlb_flush_all(d, *flush_flags) )
         *flush_flags = 0;
 
+    spin_unlock(&hd->lock);
     return rc;
 }
 
 int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 {
     unsigned int flush_flags = 0;
-    int rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags);
+    int rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
         rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags);
@@ -522,14 +536,20 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 }
 
 int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
-                      unsigned int *flags)
+                      unsigned int *flags, u16 ctx_no)
 {
-    const struct domain_iommu *hd = dom_iommu(d);
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
 
     if ( !is_iommu_enabled(d) || !hd->platform_ops->lookup_page )
         return -EOPNOTSUPP;
 
-    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags);
+    if (!iommu_check_context(d, ctx_no))
+        return -ENOENT;
+
+    ret = iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags, iommu_get_context(d, ctx_no));
+
+    return ret;
 }
 
 int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
@@ -821,6 +841,67 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
 
     return ret;
 }
+
+int _iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+{
+    u16 prev_ctx_no;
+    device_t *ctx_dev;
+    struct iommu_context *prev_ctx, *next_ctx;
+    int ret;
+
+    pcidevs_lock();
+    prev_ctx_no = dev->context;
+
+    if ( ctx_no == prev_ctx_no )
+    {
+        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu\n", &dev, ctx_no);
+        ret = 0;
+        goto unlock;
+    }
+
+    if ( !iommu_check_context(d, ctx_no) )
+    {
+        ret = -ENOENT;
+        goto unlock;
+    }
+
+    /* Remove device from previous context, and add it to new one. */
+
+    prev_ctx = iommu_get_context(d, prev_ctx_no);
+    next_ctx = iommu_get_context(d, ctx_no);
+
+    list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list)
+    {
+        if ( ctx_dev == dev )
+        {
+            list_del(&ctx_dev->context_list);
+            list_add(&ctx_dev->context_list, &next_ctx->devices);
+            break;
+        }
+    }
+
+    ret = iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
+
+    if (!ret)
+        dev->context = ctx_no; /* update device context*/
+
+unlock:
+    pcidevs_unlock();
+    return ret;
+}
+
+int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_reattach_context(d, devfn, dev, ctx_no);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
 int _iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
     struct domain_iommu *hd = dom_iommu(d);
