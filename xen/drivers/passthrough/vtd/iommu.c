@@ -3115,6 +3115,7 @@ static int fill_qpt(struct dma_pte *this, unsigned int level,
                     struct page_info *pgs[6])
 {
     struct domain_iommu *hd = dom_iommu(dom_io);
+    struct iommu_context *ctx = iommu_default_context(dom_io);
     unsigned int i;
     int rc = 0;
 
@@ -3131,7 +3132,7 @@ static int fill_qpt(struct dma_pte *this, unsigned int level,
                  * page table pages, and the resulting allocations are always
                  * zeroed.
                  */
-                pgs[level] = iommu_alloc_pgtable(hd, 0);
+                pgs[level] = iommu_alloc_pgtable(hd, ctx, 0);
                 if ( !pgs[level] )
                 {
                     rc = -ENOMEM;
