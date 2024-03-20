@@ -401,6 +401,8 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
 
     ASSERT(!IOMMUF_order(flags));
 
+    spin_lock(&hd->lock);
+
     for ( i = 0; i < page_count; i += 1UL << order )
     {
         dfn_t dfn = dfn_add(dfn0, i);
@@ -411,7 +413,10 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
         if ( (flags & IOMMUF_preempt) &&
              ((!(++j & 0xfff) && general_preempt_check()) ||
               i > LONG_MAX - (1UL << order)) )
+        {
+            spin_unlock(&hd->lock);
             return i;
+        }
 
         rc = iommu_call(hd->platform_ops, map_page, d, dfn, mfn,
                         flags | IOMMUF_order(order), flush_flags,
@@ -443,6 +448,7 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
          !iommu_iotlb_flush_all(d, *flush_flags) )
         *flush_flags = 0;
 
+    spin_unlock(&hd->lock);
     return rc;
 }
 
@@ -551,7 +557,9 @@ int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
     if (!iommu_check_context(d, ctx_no))
         return -ENOENT;
 
+    spin_lock(&hd->lock);
     ret = iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags, iommu_get_context(d, ctx_no));
+    spin_unlock(&hd->lock);
 
     return ret;
 }
