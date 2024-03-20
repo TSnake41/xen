@@ -278,13 +278,12 @@ static void cf_check iommu_dump_page_tables(unsigned char key)
 
     for_each_domain(d)
     {
-        if ( is_hardware_domain(d) || !is_iommu_enabled(d) )
+        if ( !is_iommu_enabled(d) )
             continue;
 
         if ( iommu_use_hap_pt(d) )
         {
             printk("%pd sharing page tables\n", d);
-            continue;
         }
 
         iommu_vcall(dom_iommu(d)->platform_ops, dump_page_tables, d);
