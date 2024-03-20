@@ -2625,6 +2625,42 @@ static struct iommu_state {
     uint32_t fectl;
 } *__read_mostly iommu_state;
 
+static void arch_iommu_dump_domain_contexts(struct domain *d)
+{
+    unsigned int i;
+    struct pci_dev *pdev;
+    struct iommu_context *ctx;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    printk("d%hu contexts\n", d->domain_id);
+
+    spin_lock(&hd->lock);
+
+    for (i = 0; i < (1 + dom_iommu(d)->other_contexts.count); ++i)
+    {
+        if (iommu_check_context(d, i))
+        {
+            printk(" Context %d\n", i);
+            ctx = iommu_get_context(d, i);
+
+            list_for_each_entry(pdev, &ctx->devices, context_list)
+            {
+                printk("  - %pp\n", &pdev->sbdf);
+            }
+        }
+    }
+    
+    spin_unlock(&hd->lock);
+}
+
+static void arch_iommu_dump_contexts(unsigned char key)
+{
+    struct domain *d;
+
+    for_each_domain(d) {
+        arch_iommu_dump_domain_contexts(d);
+    }
+}
 static int __init cf_check vtd_setup(void)
 {
     struct acpi_drhd_unit *drhd;
@@ -2752,6 +2788,7 @@ static int __init cf_check vtd_setup(void)
     iommu_ops.page_sizes |= large_sizes;
 
     register_keyhandler('V', vtd_dump_iommu_info, "dump iommu info", 1);
+    register_keyhandler('X', arch_iommu_dump_contexts, "dump iommu contexts", 1);
 
     return 0;
 
@@ -3076,6 +3113,11 @@ static void vtd_dump_page_table_level(paddr_t pt_maddr, int level, paddr_t gpa,
     if ( level < 1 )
         return;
 
+    if (pt_maddr == 0) {
+        printk(" (empty)\n");
+        return;
+    }
+
     pt_vaddr = map_vtd_domain_page(pt_maddr);
 
     next_level = level - 1;
@@ -3106,12 +3148,24 @@ static void vtd_dump_page_table_level(paddr_t pt_maddr, int level, paddr_t gpa,
 
 static void cf_check vtd_dump_page_tables(struct domain *d)
 {
-    const struct domain_iommu *hd = dom_iommu(d);
+    struct domain_iommu *hd = dom_iommu(d);
+    unsigned int i;
 
     printk(VTDPREFIX" %pd table has %d levels\n", d,
            agaw_to_level(hd->arch.vtd.agaw));
-    vtd_dump_page_table_level(hd->arch.vtd.pgd_maddr,
-                              agaw_to_level(hd->arch.vtd.agaw), 0, 0);
+
+    for (i = 1; i < (1 + hd->other_contexts.count); ++i)
+    {
+        bool allocated = iommu_check_context(d, i);
+        printk(VTDPREFIX " %pd context %d: %s\n", d, i,
+               allocated ? "allocated" : "non-allocated");
+
+        if (allocated) {
+            const struct iommu_context *ctx = iommu_get_context(d, i);
+            vtd_dump_page_table_level(ctx->arch.vtd.pgd_maddr,
+                                      agaw_to_level(hd->arch.vtd.agaw), 0, 0);
+        }
+    }
 }
 
 static int fill_qpt(struct dma_pte *this, unsigned int level,
