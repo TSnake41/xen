@@ -312,6 +312,12 @@ static int __init cf_check iov_detect(void)
         return -ENODEV;
     }
 
+    if ( unlikely(!cpu_has_cx16) )
+    {
+        printk("AMD-Vi: CPU doesn't support CMPXCHG16B, disabling\n");
+        return -ENOSYS;
+    }
+
     init_done = 1;
 
     if ( !amd_iommu_perdev_intremap )
