@@ -305,6 +305,12 @@ static int __init cf_check iov_detect(void)
     if ( !iommu_enable && !iommu_intremap )
         return 0;
 
+    if ( unlikely(!cpu_has_cx16) )
+    {
+        printk("AMD-Vi: CPU doesn't support CMPXCHG16B, disabling\n");
+        return -ENODEV;
+    }
+
     if ( (init_done ? amd_iommu_init_late()
                     : amd_iommu_init(false)) != 0 )
     {
