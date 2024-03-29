@@ -299,7 +299,7 @@ mca                                do       do       -        -        -
 paging_domctl_cont                 do       do       do       do       -
 #endif
 #ifdef CONFIG_HAS_PASSTHROUGH
-iommu_op                           do       do       -        -        -
+iommu_op                           do       do       do       do        - 
 #endif
 
 #endif /* !CPPCHECK */
