@@ -92,6 +92,8 @@ static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
     if (status < 0)
         return status;
 
+    printk("Created context %hu\n", ctx_no);
+
     op->ctx_no = ctx_no;
     return 0;
 }
@@ -121,6 +123,8 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
     mfn_t mfn;
     unsigned int flags;
     unsigned int flush_flags = 0;
+    
+    printk("Mapping gfn:%lx to dfn:%lx\n", op->map_page.gfn, op->map_page.dfn);
 
     /* Lookup page struct backing gfn */
     ret = get_paged_frame(d, _gfn(op->map_page.gfn), &mfn, &page, 0);
@@ -161,6 +165,8 @@ static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
     int ret;
     unsigned int flags;
     unsigned int flush_flags = 0;
+    
+    printk("Unmapping dfn:%lx\n", op->unmap_page.dfn);
 
     /* Check if there is a valid BFN mapping for this domain */
     if ( iommu_lookup_page(d, _dfn(op->unmap_page.dfn), &mfn, &flags, op->ctx_no) )
