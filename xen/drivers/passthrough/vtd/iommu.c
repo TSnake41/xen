@@ -55,8 +55,9 @@
 
 /* dom_io is used as a sentinel for quarantined devices */
 #define QUARANTINE_SKIP(d, pgd_maddr) ((d) == dom_io && !(pgd_maddr))
-#define DEVICE_DOMID(d, pdev) ((d) != dom_io ? (d)->domain_id \
-                                             : (pdev)->arch.pseudo_domid)
+#define DEVICE_DOMID(d, pdev, ctx) \
+    ((d) != dom_io ? ((ctx)->id + 1) \
+    : (pdev)->arch.pseudo_domid)
 #define DEVICE_PGTABLE(d, pdev, ctx) ((d) != dom_io \
                                  ? ((ctx)->arch.vtd.pgd_maddr) \
                                  : (pdev)->arch.vtd.pgd_maddr)
@@ -693,7 +694,7 @@ static int __must_check iommu_flush_iotlb_psi(struct vtd_iommu *iommu, u16 did,
     return status;
 }
 
-static int __must_check iommu_flush_all(void)
+int __must_check iommu_flush_all(void)
 {
     struct acpi_drhd_unit *drhd;
     struct vtd_iommu *iommu;
@@ -743,16 +744,8 @@ static int __must_check cf_check iommu_flush_iotlb(struct domain *d, dfn_t dfn,
     int iommu_domid;
     int ret = 0;
 
-    if ( flush_flags & IOMMU_FLUSHF_all )
-    {
-        dfn = INVALID_DFN;
-        page_count = 0;
-    }
-    else
-    {
-        ASSERT(page_count && !dfn_eq(dfn, INVALID_DFN));
-        ASSERT(flush_flags);
-    }
+    dfn = INVALID_DFN;
+    page_count = 0;
 
     /*
      * No need pcideves_lock here because we have flush
@@ -1483,7 +1476,8 @@ int domain_context_mapping_one(
     struct domain *domain,
     struct vtd_iommu *iommu,
     uint8_t bus, uint8_t devfn, const struct pci_dev *pdev,
-    domid_t domid, paddr_t pgd_maddr, unsigned int mode)
+    domid_t domid, paddr_t pgd_maddr, unsigned int mode,
+    struct iommu_context *ctx)
 {
     struct domain_iommu *hd = dom_iommu(domain);
     struct context_entry *context, *context_entries, lctxt;
@@ -1504,10 +1498,11 @@ int domain_context_mapping_one(
     context = &context_entries[devfn];
     old = (lctxt = *context).full;
 
+    #if 0
     if ( context_present(lctxt) )
     {
         domid_t domid;
-
+        
         prev_did = context_domain_id(lctxt);
         domid = did_to_domain_id(iommu, prev_did);
         if ( domid < DOMID_FIRST_RESERVED )
@@ -1524,6 +1519,7 @@ int domain_context_mapping_one(
             return -ESRCH;
         }
     }
+    #endif
 
     if ( iommu_hwdom_passthrough && is_hardware_domain(domain) )
     {
@@ -1658,7 +1654,7 @@ int domain_context_mapping_one(
     unmap_vtd_domain_page(context_entries);
 
     if ( !seg && !rc )
-        rc = me_wifi_quirk(domain, bus, devfn, domid, pgd_maddr, mode);
+        rc = me_wifi_quirk(domain, bus, devfn, domid, pgd_maddr, mode, ctx);
 
     if ( rc && !(mode & MAP_ERROR_RECOVERY) )
     {
@@ -1672,10 +1668,10 @@ int domain_context_mapping_one(
             ret = domain_context_unmap_one(domain, iommu, bus, devfn);
         else
             ret = domain_context_mapping_one(prev_dom, iommu, bus, devfn, pdev,
-                                             DEVICE_DOMID(prev_dom, pdev),
+                                             DEVICE_DOMID(prev_dom, pdev, ctx),
                                              DEVICE_PGTABLE(prev_dom, pdev, iommu_default_context(prev_dom)),
                                              (mode & MAP_WITH_RMRR) |
-                                             MAP_ERROR_RECOVERY) < 0;
+                                             MAP_ERROR_RECOVERY, ctx) < 0;
 
         if ( !ret && pdev && pdev->devfn == devfn )
             check_cleanup_domid_map(domain, pdev, iommu);
@@ -1771,8 +1767,8 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
             printk(VTDPREFIX "%pd:PCIe: map %pp\n",
                    domain, &PCI_SBDF(seg, bus, devfn));
         ret = domain_context_mapping_one(domain, drhd->iommu, bus, devfn, pdev,
-                                         DEVICE_DOMID(domain, pdev), pgd_maddr,
-                                         mode);
+                                         DEVICE_DOMID(domain, pdev, ctx), pgd_maddr,
+                                         mode, ctx);
         if ( ret > 0 )
             ret = 0;
         if ( !ret && devfn == pdev->devfn && ats_device(pdev, drhd) > 0 )
@@ -1797,8 +1793,8 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
                    domain, &PCI_SBDF(seg, bus, devfn));
 
         ret = domain_context_mapping_one(domain, drhd->iommu, bus, devfn,
-                                         pdev, DEVICE_DOMID(domain, pdev),
-                                         pgd_maddr, mode);
+                                         pdev, DEVICE_DOMID(domain, pdev, ctx),
+                                         pgd_maddr, mode, ctx);
         if ( ret < 0 )
             break;
         prev_present = ret;
@@ -1828,8 +1824,8 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
          */
         if ( ret >= 0 )
             ret = domain_context_mapping_one(domain, drhd->iommu, bus, devfn,
-                                             NULL, DEVICE_DOMID(domain, pdev),
-                                             pgd_maddr, mode);
+                                             NULL, DEVICE_DOMID(domain, pdev, ctx),
+                                             pgd_maddr, mode, ctx);
 
         /*
          * Devices behind PCIe-to-PCI/PCIx bridge may generate different
@@ -1844,8 +1840,8 @@ static int domain_context_mapping(struct domain *domain, u8 devfn,
         if ( !ret && pdev_type(seg, bus, devfn) == DEV_TYPE_PCIe2PCI_BRIDGE &&
              (secbus != pdev->bus || pdev->devfn != 0) )
             ret = domain_context_mapping_one(domain, drhd->iommu, secbus, 0,
-                                             NULL, DEVICE_DOMID(domain, pdev),
-                                             pgd_maddr, mode);
+                                             NULL, DEVICE_DOMID(domain, pdev, ctx),
+                                             pgd_maddr, mode, ctx);
 
         if ( ret )
         {
@@ -1933,7 +1929,7 @@ int domain_context_unmap_one(
 
     if ( !iommu->drhd->segment && !rc )
         rc = me_wifi_quirk(domain, bus, devfn, DOMID_INVALID, 0,
-                           UNMAP_ME_PHANTOM_FUNC);
+                           UNMAP_ME_PHANTOM_FUNC, NULL);
 
     if ( rc && !is_hardware_domain(domain) && domain != dom_io )
     {
@@ -2040,11 +2036,11 @@ static const struct acpi_drhd_unit *domain_context_unmap(
 
 static void cf_check iommu_clear_root_pgtable(struct domain *d, struct iommu_context *ctx)
 {
-    struct domain_iommu *hd = dom_iommu(d);
+    //struct domain_iommu *hd = dom_iommu(d);
 
-    spin_lock(&hd->lock);
+    //spin_lock(&hd->lock);
     ctx->arch.vtd.pgd_maddr = 0;
-    spin_unlock(&hd->lock);
+    //spin_unlock(&hd->lock);
 }
 
 static void cf_check iommu_domain_teardown(struct domain *d)

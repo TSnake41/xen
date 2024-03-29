@@ -83,7 +83,8 @@ void unmap_vtd_domain_page(const void *va);
 int domain_context_mapping_one(struct domain *domain, struct vtd_iommu *iommu,
                                uint8_t bus, uint8_t devfn,
                                const struct pci_dev *pdev, domid_t domid,
-                               paddr_t pgd_maddr, unsigned int mode);
+                               paddr_t pgd_maddr, unsigned int mode,
+                               struct iommu_context *ctx);
 int domain_context_unmap_one(struct domain *domain, struct vtd_iommu *iommu,
                              uint8_t bus, uint8_t devfn);
 int cf_check intel_iommu_get_reserved_device_memory(
@@ -107,7 +108,7 @@ void vtd_ops_preamble_quirk(struct vtd_iommu *iommu);
 void vtd_ops_postamble_quirk(struct vtd_iommu *iommu);
 int __must_check me_wifi_quirk(struct domain *domain, uint8_t bus,
                                uint8_t devfn, domid_t domid, paddr_t pgd_maddr,
-                               unsigned int mode);
+                               unsigned int mode, struct iommu_context *ctx);
 void pci_vtd_quirk(const struct pci_dev *);
 void quirk_iommu_caps(struct vtd_iommu *iommu);
 
