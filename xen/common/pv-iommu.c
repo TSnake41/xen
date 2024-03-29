@@ -29,6 +29,9 @@
 
 #define PVIOMMU_PREFIX "[PV-IOMMU] "
 
+// HACK: Flush all IOMMUs
+int iommu_flush_all(void);
+
 static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
                            struct page_info **page, int readonly)
 {
@@ -261,6 +264,8 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
     }
 
 flush_pages:
+    iommu_flush_all(); // HACK
+
     if ( count > 1 )
     {
         int rc = 0;
