@@ -55,12 +55,8 @@
 
 /* dom_io is used as a sentinel for quarantined devices */
 #define QUARANTINE_SKIP(d, pgd_maddr) ((d) == dom_io && !(pgd_maddr))
-#define DEVICE_DOMID(d, pdev, ctx) \
-    ((d) != dom_io ? ((ctx)->id + 1) \
-    : (pdev)->arch.pseudo_domid)
-#define DEVICE_PGTABLE(d, pdev, ctx) ((d) != dom_io \
-                                 ? ((ctx)->arch.vtd.pgd_maddr) \
-                                 : (pdev)->arch.vtd.pgd_maddr)
+#define DEVICE_DOMID(pdev, ctx) (0) // TODO
+#define DEVICE_PGTABLE(d, ctx) ((ctx)->arch.vtd.pgd_maddr)
 
 bool __read_mostly iommu_igfx = true;
 bool __read_mostly iommu_qinval = true;
@@ -1473,11 +1469,9 @@ static void __hwdom_init cf_check intel_iommu_hwdom_init(struct domain *d)
  *   is the "main" request for a device (pdev != NULL).
  */
 int domain_context_mapping_one(
-    struct domain *domain,
-    struct vtd_iommu *iommu,
+    struct domain *domain, struct vtd_iommu *iommu,
     uint8_t bus, uint8_t devfn, const struct pci_dev *pdev,
-    domid_t domid, paddr_t pgd_maddr, unsigned int mode,
-    struct iommu_context *ctx)
+    struct iommu_context *ctx, unsigned int mode)
 {
     struct domain_iommu *hd = dom_iommu(domain);
     struct context_entry *context, *context_entries, lctxt;
@@ -1498,7 +1492,6 @@ int domain_context_mapping_one(
     context = &context_entries[devfn];
     old = (lctxt = *context).full;
 
-    #if 0
     if ( context_present(lctxt) )
     {
         domid_t domid;
@@ -1519,7 +1512,6 @@ int domain_context_mapping_one(
             return -ESRCH;
         }
     }
-    #endif
 
     if ( iommu_hwdom_passthrough && is_hardware_domain(domain) )
     {
@@ -3298,17 +3290,56 @@ static int cf_check intel_iommu_quarantine_init(struct pci_dev *pdev,
 
 static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    if (!(flags & IOMMU_CONTEXT_INIT_default))
+    struct acpi_drhd_unit *drhd;
+
+    ctx->arch.vtd.did = xzalloc_array(u16, nr_iommus);
+
+    if (!ctx->arch.vtd.did)
+        return -ENOMEM;
+
+    if ( flags & IOMMU_CONTEXT_INIT_default )
+    {
+        ctx->arch.vtd.pgd_maddr = 0;
+
+        /* Populate context DID map using domain id. */
+        for_each_drhd_unit(drhd)
+        {
+            ctx->arch.vtd.did[drhd->iommu->index] =
+                convert_domid(drhd->iommu, d->domain_id);
+        }
+    }
+    else
+    {
+        /* Populate context DID map using pseudo DIDs */
+        for_each_drhd_unit(drhd)
+        {
+            ctx->arch.vtd.did[drhd->iommu->index] =
+                iommu_alloc_domid(drhd->iommu->pseudo_domid_map);
+        }
+
         /* Create initial context page */
         addr_to_dma_page_maddr(d, ctx, 0, min_pt_levels, NULL, true);
-    else
-        ctx->arch.vtd.pgd_maddr = 0;
+
+    }
 
     return arch_iommu_context_init(d, ctx, flags);
 }
 
 static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
+    struct acpi_drhd_unit *drhd;
+
+    if (ctx->arch.vtd.did)
+    {
+        for_each_drhd_unit(drhd)
+        {
+            iommu_free_domid(ctx->arch.vtd.did[drhd->iommu->index],
+                drhd->iommu->pseudo_domid_map);
+        }
+
+        xfree(ctx->arch.vtd.did);
+    }
+
     return arch_iommu_context_teardown(d, ctx, flags);
 }
 
