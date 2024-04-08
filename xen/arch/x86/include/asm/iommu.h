@@ -42,6 +42,7 @@ struct arch_iommu_context
         /* Intel VT-d */
         struct {
             uint64_t pgd_maddr; /* io page directory machine address */
+            domid_t *did; /* per-iommu DID */
         } vtd;
         /* AMD IOMMU */
         struct {

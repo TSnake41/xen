@@ -250,11 +250,18 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
 
     ASSERT(!(hd->need_sync && hd->hap_pt_share));
 
-    if (is_hardware_domain(d)) {
+    if ( is_hardware_domain(d) )
+    {
         BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
         printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
         hd->other_contexts.count = iommu_hwdom_nb_ctx - 1;
-    } else
+    }
+    else if ( d == dom_io )
+    {
+        /* TODO: Do something else */
+        hd->other_contexts.count = 128;
+    }
+    else
         hd->other_contexts.count = 0;
 
     other_context_count = hd->other_contexts.count;
