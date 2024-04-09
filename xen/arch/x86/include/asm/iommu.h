@@ -42,7 +42,8 @@ struct arch_iommu_context
         /* Intel VT-d */
         struct {
             uint64_t pgd_maddr; /* io page directory machine address */
-            domid_t *did; /* per-iommu DID */
+            domid_t *didmap; /* per-iommu DID */
+            unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the context uses */
         } vtd;
         /* AMD IOMMU */
         struct {
@@ -64,7 +65,6 @@ struct arch_iommu
     union {
         /* Intel VT-d */
         struct {
-            unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the domain uses */
             unsigned int agaw; /* adjusted guest address width, 0 is level 2 30-bit */
         } vtd;
         /* AMD IOMMU */
