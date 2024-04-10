@@ -178,7 +178,8 @@ int __must_check iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
 
 int __must_check iommu_iotlb_flush(struct domain *d, dfn_t dfn,
                                    unsigned long page_count,
-                                   unsigned int flush_flags);
+                                   unsigned int flush_flags,
+                                   u16 ctx_no);
 int __must_check iommu_iotlb_flush_all(struct domain *d,
                                        unsigned int flush_flags);
 
@@ -257,17 +258,18 @@ struct iommu_ops {
     unsigned long page_sizes;
     int (*init)(struct domain *d);
     void (*hwdom_init)(struct domain *d);
-    int (*quarantine_init)(device_t *dev, bool scratch_page);
-    int (*add_device)(uint8_t devfn, device_t *dev, struct iommu_context *ctx);
-    int (*context_init)(struct domain *d, struct iommu_context *ctx, u32 flags);
-    int (*context_teardown)(struct domain *d, struct iommu_context *ctx, u32 flags);
-    int (*reattach_context)(struct domain *d, u8 devfn, device_t *dev, struct iommu_context *ctx);
+    int (*context_init)(struct domain *d, struct iommu_context *ctx,
+                        u32 flags);
+    int (*context_teardown)(struct domain *d, struct iommu_context *ctx,
+                            u32 flags);
+    int (*attach)(struct domain *d, u8 devfn, device_t *dev,
+                  struct iommu_context *ctx);
+    int (*dettach)(struct domain *d, u8 devfn, device_t *dev,
+                   struct iommu_context *prev_ctx);
+    int (*reattach)(struct domain *d, u8 devfn, device_t *dev,
+                    struct iommu_context *prev_ctx,
+                    struct iommu_context *ctx);
     int (*enable_device)(device_t *dev);
-    int (*remove_device)(uint8_t devfn, device_t *dev);
-    int (*assign_device)(struct domain *d, uint8_t devfn, device_t *dev,
-                         uint32_t flag);
-    int (*reassign_device)(struct domain *s, struct domain *t,
-                           uint8_t devfn, device_t *dev);
 #ifdef CONFIG_HAS_PCI
     int (*get_device_group_id)(uint16_t seg, uint8_t bus, uint8_t devfn);
 #endif /* HAS_PCI */
@@ -308,7 +310,7 @@ struct iommu_ops {
     int __must_check (*suspend)(void);
     void (*resume)(void);
     void (*crash_shutdown)(void);
-    int __must_check (*iotlb_flush)(struct domain *d, dfn_t dfn,
+    int __must_check (*iotlb_flush)(struct iommu_context *ctx, dfn_t dfn,
                                     unsigned long page_count,
                                     unsigned int flush_flags);
     int (*get_reserved_device_memory)(iommu_grdm_t *func, void *ctxt);
@@ -357,6 +359,8 @@ struct iommu_context {
     struct list_head devices;
 
     struct arch_iommu_context arch;
+
+    bool opaque; /* context can't be modified nor accessed (e.g HAP) */
 };
 
 struct iommu_context_list {
@@ -449,7 +453,8 @@ void iommu_dev_iotlb_flush_timeout(struct domain *d, struct pci_dev *pdev);
 struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no);
 bool iommu_check_context(struct domain *d, u16 ctx_no);
 
-#define IOMMU_CONTEXT_INIT_default 1
+#define IOMMU_CONTEXT_INIT_default (1 << 0)
+#define IOMMU_CONTEXT_INIT_quarantine (1 << 1)
 int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags);
 
 #define IOMMU_TEARDOWNF_REATTACH_DEFAULT (1 << 0)
@@ -458,7 +463,9 @@ int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flag
 int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);
 int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags);
 
-int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no);
+int iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
+                           u8 devfn, device_t *dev, u16 ctx_no);
+int iommu_attach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no);
 
 /*
  * The purpose of the iommu_dont_flush_iotlb optional cpu flag is to
