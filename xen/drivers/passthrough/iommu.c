@@ -176,12 +176,14 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
             iommu_hwdom_reserved = val;
         else if ( !cmdline_strcmp(s, "none") )
             iommu_hwdom_none = true;
-        else if ( !parse_signed_integer("nb-ctx", s, ss, &nb_ctx) ) {
+        else if ( !parse_signed_integer("nb-ctx", s, ss, &nb_ctx) )
+        {
             if (nb_ctx > 0 && nb_ctx < UINT16_MAX)
                 iommu_hwdom_nb_ctx = nb_ctx;
             else 
                 printk(XENLOG_INFO "'nb-ctx=%lld' value out of range!\n", nb_ctx);
-        } else
+        }
+        else
             rc = -EINVAL;
 
         s = ss + 1;
@@ -249,7 +251,8 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
     if ( is_hardware_domain(d) )
     {
         BUG_ON(iommu_hwdom_nb_ctx == 0); /* sanity check (prevent underflow) */
-        printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n", (unsigned long)iommu_hwdom_nb_ctx);
+        printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n",
+               (unsigned long)iommu_hwdom_nb_ctx);
         hd->other_contexts.count = iommu_hwdom_nb_ctx - 1;
     }
     else if ( d == dom_io )
@@ -263,8 +266,10 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
     other_context_count = hd->other_contexts.count;
     if (other_context_count > 0) {
         /* Initialize context bitmap */
-        hd->other_contexts.bitmap = xzalloc_array(unsigned long, BITS_TO_LONGS(other_context_count));
-        hd->other_contexts.map = xzalloc_array(struct iommu_context, other_context_count);
+        hd->other_contexts.bitmap = xzalloc_array(unsigned long, 
+                                                  BITS_TO_LONGS(other_context_count));
+        hd->other_contexts.map = xzalloc_array(struct iommu_context,
+                                               other_context_count);
     } else {
         hd->other_contexts.bitmap = NULL;
         hd->other_contexts.map = NULL;
@@ -311,9 +316,12 @@ void __hwdom_init iommu_hwdom_init(struct domain *d)
     iommu_vcall(hd->platform_ops, hwdom_init, d);
 }
 
-static void iommu_teardown(struct domain *d)
+void iommu_domain_destroy(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
+
+    if ( !is_iommu_enabled(d) )
+        return;
 
     /*
      * During early domain creation failure, we may reach here with the
@@ -323,14 +331,6 @@ static void iommu_teardown(struct domain *d)
         return;
 
     iommu_vcall(hd->platform_ops, teardown, d);
-}
-
-void iommu_domain_destroy(struct domain *d)
-{
-    if ( !is_iommu_enabled(d) )
-        return;
-
-    iommu_teardown(d);
 
     arch_iommu_domain_destroy(d);
 }
@@ -376,10 +376,9 @@ bool iommu_check_context(struct domain *d, u16 ctx_no) {
 struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
     struct domain_iommu *hd = dom_iommu(d);
 
-    if (!iommu_check_context(d, ctx_no)) {
+    if (!iommu_check_context(d, ctx_no))
         return NULL;
-    }
-
+    
     if (ctx_no == 0)
         return &hd->default_ctx;
     else
@@ -464,7 +463,7 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
     rc = iommu_map(d, dfn, mfn, page_count, flags, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
-        rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags);
+        rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags, 0);
 
     return rc;
 }
@@ -481,7 +480,7 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
     if ( !is_iommu_enabled(d) )
         return 0;
 
-    if (!iommu_check_context(d, ctx_no))
+    if ( !iommu_check_context(d, ctx_no) )
         return -ENOENT;
 
     ASSERT(!(flags & ~IOMMUF_preempt));
@@ -542,7 +541,7 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
     int rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
-        rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags);
+        rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags, 0);
 
     return rc;
 }
@@ -567,7 +566,7 @@ int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
 }
 
 int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
-                      unsigned int flush_flags)
+                      unsigned int flush_flags, u16 ctx_no)
 {
     const struct domain_iommu *hd = dom_iommu(d);
     int rc;
@@ -578,9 +577,12 @@ int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
 
     if ( dfn_eq(dfn, INVALID_DFN) )
         return -EINVAL;
-
-    rc = iommu_call(hd->platform_ops, iotlb_flush, d, dfn, page_count,
-                    flush_flags);
+    
+    if ( !iommu_check_context(d, ctx_no) )
+        return -ENOENT;
+    
+    rc = iommu_call(hd->platform_ops, iotlb_flush, iommu_get_context(d, ctx_no),
+                    dfn, page_count, flush_flags);
     if ( unlikely(rc) )
     {
         if ( !d->is_shutting_down && printk_ratelimit() )
@@ -622,13 +624,26 @@ int iommu_iotlb_flush_all(struct domain *d, unsigned int flush_flags)
 
 int iommu_quarantine_dev_init(device_t *dev)
 {
-    const struct domain_iommu *hd = dom_iommu(dom_io);
+    int ret;
+    u16 ctx_no;
 
-    if ( !iommu_quarantine || !hd->platform_ops->quarantine_init )
+    if ( !iommu_quarantine )
         return 0;
 
-    return iommu_call(hd->platform_ops, quarantine_init,
-                      dev, iommu_quarantine == IOMMU_quarantine_scratch_page);
+    ret = iommu_context_alloc(dom_io, &ctx_no, IOMMU_CONTEXT_INIT_quarantine);
+
+    if ( ret )
+        return ret;
+
+    /** TODO: Setup scratch page, mappings... */
+
+    ret = iommu_reattach_context(dev->domain, dom_io, dev->devfn, dev, ctx_no);
+
+    if ( ret )
+    {
+        ASSERT(!iommu_context_free(dom_io, ctx_no, 0));
+        return ret;
+    }
 }
 
 static int __init iommu_quarantine_init(void)
@@ -856,34 +871,162 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags)
     return ret;
 }
 
-int _iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+int _iommu_attach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
 {
-    u16 prev_ctx_no;
-    device_t *ctx_dev;
-    struct iommu_context *prev_ctx, *next_ctx;
+    struct iommu_context *ctx;
     int ret;
 
     pcidevs_lock();
-    prev_ctx_no = dev->context;
 
-    if ( ctx_no == prev_ctx_no )
-    {
-        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu\n", &dev, ctx_no);
-        ret = 0;
-        goto unlock;
-    }
-
+    /* Assume device is not already bound to a domain */
+    ASSERT(!dev->domain);
+    
     if ( !iommu_check_context(d, ctx_no) )
     {
         ret = -ENOENT;
         goto unlock;
     }
 
+    ctx = iommu_get_context(d, ctx_no);
+    list_add(&dev->context_list, &ctx->devices);
+
+    ret = iommu_call(dom_iommu(d)->platform_ops, attach, d, devfn, dev, ctx);
+
+    if (!ret)
+        dev->context = ctx_no; /* update device context value */
+
+unlock:
+    pcidevs_unlock();
+    return ret;
+}
+
+int iommu_attach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    int ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_attach_context(d, devfn, dev, ctx_no);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int _iommu_dettach_context(struct domain *d, u8 devfn, device_t *dev)
+{
+    struct iommu_context *ctx;
+    int ret;
+
+    if (!dev->domain)
+    {
+        printk("Trying to dettach a non-attached device.");
+        WARN();
+        return 0;
+    }
+
+    /* Make sure device is actually in the domain. */
+    ASSERT(d == dev->domain);
+
+    pcidevs_lock();
+
+    ctx = iommu_get_context(d, dev->context);
+    ASSERT(ctx); /* device is using an invalid context ?
+                    dev->context invalid ? */
+
+    ret = iommu_call(dom_iommu(d), dettach, d, devfn, dev, ctx);
+
+    if ( ret )
+        goto unlock;
+
+    if (devfn == dev->devfn)
+    {
+        list_del(&dev->context_list);
+
+        /** TODO: Do we need to remove the device from domain ?
+         *         Reattaching to something (quarantine, hardware domain ?)
+         */
+        
+        /*
+         * rcu_lock_domain ?
+         * list_del(&dev->domain_list);
+         * dev->domain = ?;
+         */
+    }
+    
+unlock:
+    pcidevs_unlock();
+    return ret;
+}
+
+int iommu_dettach_context(struct domain *d, u8 devfn, device_t *dev)
+{
+    int ret;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    spin_lock(&hd->lock);
+    ret = _iommu_dettach_context(d, devfn, dev);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+int _iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
+                            u8 devfn, device_t *dev, u16 ctx_no)
+{
+    struct domain_iommu *hd;
+    u16 prev_ctx_no;
+    device_t *ctx_dev;
+    struct iommu_context *prev_ctx, *next_ctx;
+    int ret;
+    bool same_domain;
+
+    /* Make sure we actually are doing something meaningful */
+    BUG_ON(!prev_dom && !next_dom);
+    
+    /// TODO: Do such cases exists ?
+    // /* Platform ops must match */
+    // if (dom_iommu(prev_dom)->platform_ops != dom_iommu(next_dom)->platform_ops)
+    //     return -EINVAL;
+
+    if (!prev_dom)
+        return _iommu_attach_context(next_dom, devfn, dev, ctx_no);
+
+    if (!next_dom)
+        return _iommu_dettach_context(prev_dom, devfn, dev);
+
+    pcidevs_lock();
+
+    hd = dom_iommu(prev_dom);
+    same_domain = prev_dom == next_dom;
+
+    prev_ctx_no = dev->context;
+
+    if ( !same_domain && (ctx_no == prev_ctx_no) )
+    {
+        printk(XENLOG_DEBUG "Reattaching %pp to same IOMMU context c%hu\n", &dev, ctx_no);
+        ret = 0;
+        goto unlock;
+    }
+
+    if ( !iommu_check_context(next_dom, ctx_no) )
+    {
+        ret = -ENOENT;
+        goto unlock;
+    }
+
+    prev_ctx = iommu_get_context(prev_dom, prev_ctx_no);
+    next_ctx = iommu_get_context(next_dom, ctx_no);
+
+    /** TODO: Handle RMRR */
+    /* iommu_map_rmrr(next_dom, next_ctx, dev); */
+
+    ret = iommu_call(hd->platform_ops, reattach, next_dom, devfn, dev,
+                     prev_ctx, next_ctx);
+
+    if ( ret )
+        goto unlock;
+
     /* Remove device from previous context, and add it to new one. */
-
-    prev_ctx = iommu_get_context(d, prev_ctx_no);
-    next_ctx = iommu_get_context(d, ctx_no);
-
     list_for_each_entry(ctx_dev, &prev_ctx->devices, context_list)
     {
         if ( ctx_dev == dev )
@@ -894,7 +1037,13 @@ int _iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_n
         }
     }
 
-    ret = iommu_call(dom_iommu(d)->platform_ops, reattach_context, d, devfn, dev, next_ctx);
+    if ( !same_domain )
+    {
+        /* Update domain pci devices accordingly */
+
+        /** TODO: should be done here or elsewhere ? */
+        /* TODO */
+    }
 
     if (!ret)
         dev->context = ctx_no; /* update device context*/
@@ -904,14 +1053,24 @@ unlock:
     return ret;
 }
 
-int iommu_reattach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no)
+int iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
+                           u8 devfn, device_t *dev, u16 ctx_no)
 {
-    struct domain_iommu *hd = dom_iommu(d);
     int ret;
+    struct domain_iommu *prev_hd = dom_iommu(prev_dom);
+    struct domain_iommu *next_hd = dom_iommu(next_dom);
 
-    spin_lock(&hd->lock);
-    ret = _iommu_reattach_context(d, devfn, dev, ctx_no);
-    spin_unlock(&hd->lock);
+    spin_lock(&prev_hd->lock);
+
+    if (prev_dom != next_dom)
+        spin_lock(&next_hd->lock);
+
+    ret = _iommu_reattach_context(prev_dom, next_dom, devfn, dev, ctx_no);
+
+    spin_unlock(&prev_hd->lock);
+
+    if (prev_dom != next_dom)
+        spin_unlock(&next_hd->lock);
 
     return ret;
 }
@@ -929,7 +1088,7 @@ int _iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 fla
         struct pci_dev *device;
         list_for_each_entry(device, &ctx->devices, context_list)
         {
-            _iommu_reattach_context(d, device->devfn, device, 0);
+            _iommu_reattach_context(d, d, device->devfn, device, 0);
         }
     }
     else if (!list_empty(&ctx->devices))
