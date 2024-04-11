@@ -870,7 +870,7 @@ static int deassign_device(struct domain *d, uint16_t seg, uint8_t bus,
         devfn += pdev->phantom_stride;
         if ( PCI_SLOT(devfn) != PCI_SLOT(pdev->devfn) )
             break;
-        ret = iommu_call(hd->platform_ops, reassign_device, d, target, devfn,
+        ret = iommu_call(hd->platform_ops, add_devfn, target, devfn,
                          pci_to_dev(pdev));
         if ( ret )
             goto out;
@@ -1373,7 +1373,7 @@ static int iommu_add_device(struct pci_dev *pdev)
     if ( !is_iommu_enabled(pdev->domain) )
         return 0;
 
-    rc = iommu_call(hd->platform_ops, add_device, devfn, pci_to_dev(pdev));
+    rc = iommu_attach_context(pdev->domain, pci_to_dev(pdev), 0);
     if ( rc || !pdev->phantom_stride )
         return rc;
 
@@ -1382,7 +1382,9 @@ static int iommu_add_device(struct pci_dev *pdev)
         devfn += pdev->phantom_stride;
         if ( PCI_SLOT(devfn) != PCI_SLOT(pdev->devfn) )
             return 0;
-        rc = iommu_call(hd->platform_ops, add_device, devfn, pci_to_dev(pdev));
+
+        rc = iommu_call(hd->platform_ops, add_devfn, pdev->domain, pdev, devfn,
+                        iommu_default_context(pdev->domain));
         if ( rc )
             printk(XENLOG_WARNING "IOMMU: add %pp failed (%d)\n",
                    &PCI_SBDF(pdev->seg, pdev->bus, devfn), rc);
@@ -1409,6 +1411,7 @@ static int iommu_enable_device(struct pci_dev *pdev)
 static int iommu_remove_device(struct pci_dev *pdev)
 {
     const struct domain_iommu *hd;
+    struct iommu_context *ctx;
     u8 devfn;
 
     if ( !pdev->domain )
@@ -1418,6 +1421,10 @@ static int iommu_remove_device(struct pci_dev *pdev)
     if ( !is_iommu_enabled(pdev->domain) )
         return 0;
 
+    ctx = iommu_get_context(pdev->domain, pdev->context);
+    if ( !ctx )
+        return -EINVAL;
+
     for ( devfn = pdev->devfn ; pdev->phantom_stride; )
     {
         int rc;
@@ -1425,8 +1432,8 @@ static int iommu_remove_device(struct pci_dev *pdev)
         devfn += pdev->phantom_stride;
         if ( PCI_SLOT(devfn) != PCI_SLOT(pdev->devfn) )
             break;
-        rc = iommu_call(hd->platform_ops, remove_device, devfn,
-                        pci_to_dev(pdev));
+        rc = iommu_call(hd->platform_ops, remove_devfn, pdev->domain, pdev,
+                        devfn, ctx);
         if ( !rc )
             continue;
 
@@ -1437,7 +1444,7 @@ static int iommu_remove_device(struct pci_dev *pdev)
 
     devfn = pdev->devfn;
 
-    return iommu_call(hd->platform_ops, remove_device, devfn, pci_to_dev(pdev));
+    return iommu_call(hd->platform_ops, dettach, pdev->domain, pdev, ctx);
 }
 
 static int device_assigned(u16 seg, u8 bus, u8 devfn)
@@ -1497,22 +1504,22 @@ static int assign_device(struct domain *d, u16 seg, u8 bus, u8 devfn, u32 flag)
     if ( pdev->domain != dom_io )
     {
         rc = iommu_quarantine_dev_init(pci_to_dev(pdev));
+        /** TODO: Consider phantom functions */
         if ( rc )
             goto done;
     }
 
     pdev->fault.count = 0;
 
-    rc = iommu_call(hd->platform_ops, assign_device, d, devfn, pci_to_dev(pdev),
-                    flag);
+    iommu_attach_context(d, pci_to_dev(pdev), 0);
 
     while ( pdev->phantom_stride && !rc )
     {
         devfn += pdev->phantom_stride;
         if ( PCI_SLOT(devfn) != PCI_SLOT(pdev->devfn) )
             break;
-        rc = iommu_call(hd->platform_ops, assign_device, d, devfn,
-                        pci_to_dev(pdev), flag);
+        rc = iommu_call(hd->platform_ops, add_devfn, d, pci_to_dev(pdev),
+                        devfn, iommu_default_context(d));
     }
 
     if ( rc )
