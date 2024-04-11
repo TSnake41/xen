@@ -262,16 +262,21 @@ struct iommu_ops {
                         u32 flags);
     int (*context_teardown)(struct domain *d, struct iommu_context *ctx,
                             u32 flags);
-    int (*attach)(struct domain *d, u8 devfn, device_t *dev,
+    int (*attach)(struct domain *d, device_t *dev,
                   struct iommu_context *ctx);
-    int (*dettach)(struct domain *d, u8 devfn, device_t *dev,
+    int (*dettach)(struct domain *d, device_t *dev,
                    struct iommu_context *prev_ctx);
-    int (*reattach)(struct domain *d, u8 devfn, device_t *dev,
+    int (*reattach)(struct domain *d, device_t *dev,
                     struct iommu_context *prev_ctx,
                     struct iommu_context *ctx);
+
     int (*enable_device)(device_t *dev);
 #ifdef CONFIG_HAS_PCI
     int (*get_device_group_id)(uint16_t seg, uint8_t bus, uint8_t devfn);
+    int (*add_devfn)(struct domain *d, struct pci_dev *pdev, u16 devfn,
+                     struct iommu_context *ctx);
+    int (*remove_devfn)(struct domain *d, struct pci_dev *pdev, u16 devfn,
+                    struct iommu_context *ctx);
 #endif /* HAS_PCI */
 
     void (*teardown)(struct domain *d);
@@ -464,8 +469,9 @@ int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);
 int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags);
 
 int iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
-                           u8 devfn, device_t *dev, u16 ctx_no);
-int iommu_attach_context(struct domain *d, u8 devfn, device_t *dev, u16 ctx_no);
+                           device_t *dev, u16 ctx_no);
+int iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no);
+int iommu_dettach_context(struct domain *d, device_t *dev);
 
 /*
  * The purpose of the iommu_dont_flush_iotlb optional cpu flag is to
