@@ -649,6 +649,12 @@ bool __init cf_check iov_supports_xt(void)
     if ( !iommu_enable || !iommu_intremap )
         return false;
 
+    if ( unlikely(!cpu_has_cx16) )
+    {
+        AMD_IOMMU_WARN("CPU doesn't support CMPXCHG16B, disable interrupt remapping\n");
+        return false;
+    }
+
     if ( amd_iommu_prepare(true) )
         return false;
 
