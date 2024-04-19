@@ -1,20 +1,8 @@
-/******************************************************************************
- * common/pv_iommu.c
- * 
- * Paravirtualised IOMMU functionality
- * 
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- * 
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- * 
- * You should have received a copy of the GNU General Public License
- * along with this program; If not, see <http://www.gnu.org/licenses/>.
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * xen/common/pv_iommu.c
+ *
+ * PV-IOMMU hypercall interface.
  */
 
 #include <xen/mm.h>
@@ -29,6 +17,8 @@
 
 #define PVIOMMU_PREFIX "[PV-IOMMU] "
 
+#define PVIOMMU_MAX_PAGES 256 /* Move to Kconfig ? */
+
 // HACK: Flush all IOMMUs
 int iommu_flush_all(void);
 
@@ -39,7 +29,7 @@ static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
 
     *page = get_page_from_gfn(d, gfn_x(gfn), &p2mt,
                              (readonly) ? P2M_ALLOC : P2M_UNSHARE);
-    
+
     if ( !(*page) )
     {
         *mfn = INVALID_MFN;
@@ -59,7 +49,7 @@ static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
     return 0;
 }
 
-int can_use_iommu_check(struct domain *d)
+static int can_use_iommu_check(struct domain *d)
 {
     if ( !iommu_enabled )
     {
@@ -82,13 +72,22 @@ int can_use_iommu_check(struct domain *d)
     return 1;
 }
 
+static long query_cap_op(struct pv_iommu_op *op, struct domain *d)
+{
+    op->cap.max_ctx_no = d->iommu.other_contexts.count;
+    op->cap.max_nr_pages = PVIOMMU_MAX_PAGES;
+    op->cap.max_iova_addr = (1LLU << 39) - 1; /* TODO: hardcoded 39-bits */
+
+    return 0;
+}
+
 static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
 {
     u16 ctx_no = 0;
     int status = 0;
 
     status = iommu_context_alloc(d, &ctx_no, op->flags);
-    
+
     if (status < 0)
         return status;
 
@@ -105,10 +104,10 @@ static long free_context_op(struct pv_iommu_op *op, struct domain *d)
 
 static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
 {
-    struct physdev_pci_device *dev = &op->reattach_device.dev;
+    struct physdev_pci_device dev = op->reattach_device.dev;
     device_t *pdev;
 
-    pdev = pci_get_pdev(d, PCI_SBDF(dev->seg, dev->bus, dev->devfn));
+    pdev = pci_get_pdev(d, PCI_SBDF(dev.seg, dev.bus, dev.devfn));
 
     if ( !pdev )
         return !ENOENT;
@@ -116,28 +115,25 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
     return iommu_reattach_context(d, pdev->devfn, pdev, op->ctx_no);
 }
 
-static long map_page_op(struct pv_iommu_op *op, struct domain *d)
+static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
     int ret;
     struct page_info *page = NULL;
     mfn_t mfn;
     unsigned int flags;
     unsigned int flush_flags = 0;
-    
-    printk("Mapping gfn:%lx to dfn:%lx\n", op->map_page.gfn, op->map_page.dfn);
+    size_t i = 0;
 
-    /* Lookup page struct backing gfn */
-    ret = get_paged_frame(d, _gfn(op->map_page.gfn), &mfn, &page, 0);
+    if ( op->map_pages.nr_pages > PVIOMMU_MAX_PAGES )
+        return -E2BIG;
 
-    if (ret)
-        return ret;
+    if ( !iommu_check_context(d, op->ctx_no) )
+        return -EINVAL;
 
-    /* Check for conflict with existing mappings */
-    if ( !iommu_lookup_page(d, _dfn(op->map_page.dfn), &mfn, &flags, op->ctx_no) )
-    {
-        put_page(page);
-        return -EADDRINUSE;
-    }
+    printk("Mapping gfn:%lx-%lx to dfn:%lx-%lx on %hu\n",
+           op->map_pages.gfn, op->map_pages.gfn + op->map_pages.nr_pages - 1,
+           op->map_pages.dfn, op->map_pages.dfn + op->map_pages.nr_pages - 1,
+           op->ctx_no);
 
     flags = 0;
 
@@ -147,40 +143,76 @@ static long map_page_op(struct pv_iommu_op *op, struct domain *d)
     if ( op->flags & IOMMU_OP_writeable )
         flags |= IOMMUF_writable;
 
-    ret = iommu_map(d, _dfn(op->map_page.dfn), mfn, 1,
-        flags, &flush_flags, op->ctx_no);
-
-    if ( ret )
+    for (i = 0; i < op->map_pages.nr_pages; i++)
     {
-        put_page(page);
-        return ret;
+        gfn_t gfn = _gfn(op->map_pages.gfn + i);
+        dfn_t dfn = _dfn(op->map_pages.dfn + i);
+
+        /* Lookup pages struct backing gfn */
+        ret = get_paged_frame(d, gfn, &mfn, &page, 0);
+
+        if ( ret )
+            break;
+
+        /* Check for conflict with existing mappings */
+        if ( !iommu_lookup_page(d, dfn, &mfn, &flags, op->ctx_no) )
+        {
+            put_page(page);
+            ret = -EADDRINUSE;
+            break;
+        }
+
+        ret = iommu_map(d, dfn, mfn, 1, flags, &flush_flags, op->ctx_no);
+
+        if ( ret )
+            break;
     }
 
-    return 0;
+    op->map_pages.mapped = i;
+
+    return ret;
 }
 
-static long unmap_page_op(struct pv_iommu_op *op, struct domain *d)
+static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
     mfn_t mfn;
     int ret;
     unsigned int flags;
     unsigned int flush_flags = 0;
-    
-    printk("Unmapping dfn:%lx\n", op->unmap_page.dfn);
+    size_t i = 0;
 
-    /* Check if there is a valid BFN mapping for this domain */
-    if ( iommu_lookup_page(d, _dfn(op->unmap_page.dfn), &mfn, &flags, op->ctx_no) )
-        return -ENOENT;
+    if ( op->unmap_pages.nr_pages > PVIOMMU_MAX_PAGES )
+        return -E2BIG;
 
-    ret = iommu_unmap(d, _dfn(op->unmap_page.dfn), 1, 0, &flush_flags, op->ctx_no);
+    if ( !iommu_check_context(d, op->ctx_no) )
+        return -EINVAL;
 
-    if (ret)
-        return ret;
+    printk("Unmapping dfn:%lx-%lx on %hu\n",
+           op->unmap_pages.dfn, op->unmap_pages.dfn + op->unmap_pages.nr_pages - 1,
+           op->ctx_no);
 
-    /* Decrement reference counter */
-    put_page(mfn_to_page(mfn));
+    for (i = 0; i < op->unmap_pages.nr_pages; i++)
+    {
+        dfn_t dfn = _dfn(op->unmap_pages.dfn + i);
 
-    return 0;
+        /* Check if there is a valid mapping for this domain */
+        if ( iommu_lookup_page(d, dfn, &mfn, &flags, op->ctx_no) ) {
+            ret = -ENOENT;
+            break;
+        }
+
+        ret = iommu_unmap(d, dfn, 1, 0, &flush_flags, op->ctx_no);
+
+        if (ret)
+            break;
+
+        /* Decrement reference counter */
+        put_page(mfn_to_page(mfn));
+    }
+
+    op->unmap_pages.unmapped = i;
+
+    return ret;
 }
 
 static long lookup_page_op(struct pv_iommu_op *op, struct domain *d)
@@ -189,10 +221,13 @@ static long lookup_page_op(struct pv_iommu_op *op, struct domain *d)
     gfn_t gfn;
     unsigned int flags = 0;
 
+    if ( !iommu_check_context(d, op->ctx_no) )
+        return -EINVAL;
+
     /* Check if there is a valid BFN mapping for this domain */
     if ( iommu_lookup_page(d, _dfn(op->lookup_page.dfn), &mfn, &flags, op->ctx_no) )
         return -ENOENT;
-    
+
     gfn = mfn_to_gfn(d, mfn);
     BUG_ON(gfn_eq(gfn, INVALID_GFN));
 
@@ -213,87 +248,49 @@ long do_iommu_sub_op(struct pv_iommu_op *op)
         case 0:
             return 0;
 
+        case IOMMUOP_query_capabilities:
+            return query_cap_op(op, d);
+
         case IOMMUOP_alloc_context:
             return alloc_context_op(op, d);
-        
+
         case IOMMUOP_free_context:
             return free_context_op(op, d);
 
         case IOMMUOP_reattach_device:
             return reattach_device_op(op, d);
-        
-        case IOMMUOP_map_page:
-            return map_page_op(op, d);
-        
-        case IOMMUOP_unmap_page:
-            return unmap_page_op(op, d);
+
+        case IOMMUOP_map_pages:
+            return map_pages_op(op, d);
+
+        case IOMMUOP_unmap_pages:
+            return unmap_pages_op(op, d);
 
         case IOMMUOP_lookup_page:
             return lookup_page_op(op, d);
-        
+
         default:
             return -EINVAL;
     }
 }
 
-long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg, unsigned int count)
+long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 {
     long ret = 0;
-    int i;
     struct pv_iommu_op op;
-    struct domain *d = current->domain;
-    
-    if ( count == 0 )
-        return -EINVAL;
 
-    if ( count > 1 )
-        this_cpu(iommu_dont_flush_iotlb) = 1;
+    if ( unlikely(copy_from_guest(&op, arg, 1)) )
+        return -EFAULT;
 
-    for ( i = 0; i < count; i++ )
-    {
-        if ( i && hypercall_preempt_check() )
-        {
-            ret =  i;
-            goto flush_pages;
-        }
-        if ( unlikely(copy_from_guest_offset(&op, arg, i, 1)) )
-        {
-            ret = -EFAULT;
-            goto flush_pages;
-        }
-        ret = do_iommu_sub_op(&op);
-        if ( unlikely(copy_to_guest_offset(arg, i, &op, 1)) )
-        {
-            ret = -EFAULT;
-            goto flush_pages;
-        }
-    }
+    ret = do_iommu_sub_op(&op);
 
-flush_pages:
+    if ( unlikely(copy_to_guest(arg, &op, 1)) )
+        return -EFAULT;
+
+    printk("Doing flush_all\n");
     iommu_flush_all(); // HACK
+    printk("Done flush_all\n");
 
-    if ( count > 1 )
-    {
-        int rc = 0;
-
-        this_cpu(iommu_dont_flush_iotlb) = 0;
-        if ( i )
-            rc = iommu_iotlb_flush_all(d, IOMMU_FLUSHF_added |
-                                       IOMMU_FLUSHF_modified);
-
-        if ( rc < 0 )
-            ret = rc;
-    }
-    if ( ret > 0 )
-    {
-        XEN_GUEST_HANDLE_PARAM(pv_iommu_op_t) op =
-            guest_handle_cast(arg, pv_iommu_op_t);
-        ASSERT(ret < count);
-        guest_handle_add_offset(op, i);
-        arg = guest_handle_cast(op, void);
-        ret = hypercall_create_continuation(__HYPERVISOR_iommu_op,
-                                           "hi", arg, count - i);
-    }
     return ret;
 }
 

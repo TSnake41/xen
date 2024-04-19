@@ -16,6 +16,11 @@
 #define IOMMU_DEFAULT_CONTEXT (0)
 
 /**
+ * Query PV-IOMMU capabilities for this domain.
+ */
+#define IOMMUOP_query_capabilities    1
+
+/**
  * Allocate an IOMMU context, the new context handle will be written to ctx_no.
  */
 #define IOMMUOP_alloc_context         2
@@ -33,8 +38,8 @@
  */
 #define IOMMUOP_reattach_device       4
 
-#define IOMMUOP_map_page              5
-#define IOMMUOP_unmap_page            6
+#define IOMMUOP_map_pages             5
+#define IOMMUOP_unmap_pages           6
 
 /**
  * Get the GFN associated to a specific DFN.
@@ -46,7 +51,7 @@ struct pv_iommu_op {
     uint16_t ctx_no;
 
 /**
- * Create a context that is cloned from default. 
+ * Create a context that is cloned from default.
  * The new context will be populated with 1:1 mappings covering the entire guest memory.
  */
 #define IOMMU_CREATE_clone (1 << 0)
@@ -59,11 +64,19 @@ struct pv_iommu_op {
         struct {
             uint64_t gfn;
             uint64_t dfn;
-        } map_page;
+            /* Number of pages to map */
+            uint32_t nr_pages;
+            /* Number of pages actually mapped after sub-op */
+            uint32_t mapped;
+        } map_pages;
 
         struct {
             uint64_t dfn;
-        } unmap_page;
+            /* Number of pages to unmap */
+            uint32_t nr_pages;
+            /* Number of pages actually unmapped after sub-op */
+            uint32_t unmapped;
+        } unmap_pages;
 
         struct {
             struct physdev_pci_device dev;
@@ -73,6 +86,15 @@ struct pv_iommu_op {
             uint64_t gfn;
             uint64_t dfn;
         } lookup_page;
+
+        struct {
+            /* Maximum number of IOMMU context this domain can use. */
+            uint16_t max_ctx_no;
+            /* Maximum number of pages that can be modified in a single map/unmap operation. */
+            uint32_t max_nr_pages;
+            /* Maximum device address (iova) that the guest can use for mappings. */
+            uint64_t max_iova_addr;
+        } cap;
     };
 };
 
