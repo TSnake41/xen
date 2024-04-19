@@ -210,7 +210,7 @@ hypfs_op(unsigned int cmd, const char *arg1, unsigned long arg2, void *arg3, uns
 xenpmu_op(unsigned int op, xen_pmu_params_t *arg)
 #endif
 #ifdef CONFIG_HAS_PASSTHROUGH
-iommu_op(void *arg, unsigned int count)
+iommu_op(void *arg)
 #endif
 
 #ifdef CONFIG_PV
@@ -299,7 +299,7 @@ mca                                do       do       -        -        -
 paging_domctl_cont                 do       do       do       do       -
 #endif
 #ifdef CONFIG_HAS_PASSTHROUGH
-iommu_op                           do       do       do       do        - 
+iommu_op                           do       do       do       do        -
 #endif
 
 #endif /* !CPPCHECK */
