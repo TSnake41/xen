@@ -57,7 +57,7 @@ It is not possible to free the default context.
 
 Reattach context devices to default context if specified by the guest.
 
-Fail if there is a device in the context and reattach-to-default flag is not 
+Fail if there is a device in the context and reattach-to-default flag is not
 specified.
 
 ## Reattach device
@@ -72,7 +72,7 @@ The guest needs to specify a PCI SBDF of a device he has access to.
 Map/unmap a page on a context.
 The guest needs to specify a gfn and target dfn to map.
 
-> what behavior in case a mapping already exist ?
+Refuse to create the mapping if one already exist for the same dfn.
 
 ## Lookup page
 
@@ -83,8 +83,7 @@ Get the gfn mapped by a specific dfn.
 ## Hypercall batching
 
 In order to prevent unneeded hypercalls and IOMMU flushing, it is advisable to
-be able to batch IOMMU operations (e.g create a context, put devices in it and
-create several mappings within a single hypercall).
+be able to batch some critical IOMMU operations (e.g map/unmap multiple pages).
 
 ## Hardware without IOMMU support
 
