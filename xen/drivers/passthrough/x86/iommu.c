@@ -143,7 +143,7 @@ int __init iommu_hardware_setup(void)
         unmask_8259A();
         free_ioapic_entries(ioapic_entries);
     }
-    
+
     return rc;
 }
 
@@ -203,7 +203,7 @@ int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32
     /* Cleanup all page tables */
     while ( iommu_free_pgtables(d, ctx) == -ERESTART )
         /* nothing */;
-    
+
     return 0;
 }
 
@@ -212,7 +212,7 @@ int arch_iommu_domain_init(struct domain *d)
     struct domain_iommu *hd = dom_iommu(d);
 
     INIT_LIST_HEAD(&hd->arch.identity_maps);
-    
+
     return 0;
 }
 
@@ -554,7 +554,6 @@ void __hwdom_init arch_iommu_hwdom_init(struct domain *d)
 
 void arch_pci_init_pdev(struct pci_dev *pdev)
 {
-    pdev->arch.pseudo_domid = DOMID_INVALID;
 }
 
 unsigned long *__init iommu_init_domid(domid_t reserve)

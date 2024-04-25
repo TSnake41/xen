@@ -315,7 +315,8 @@ struct iommu_ops {
     int __must_check (*suspend)(void);
     void (*resume)(void);
     void (*crash_shutdown)(void);
-    int __must_check (*iotlb_flush)(struct iommu_context *ctx, dfn_t dfn,
+    int __must_check (*iotlb_flush)(struct domain *d,
+                                    struct iommu_context *ctx, dfn_t dfn,
                                     unsigned long page_count,
                                     unsigned int flush_flags);
     int (*get_reserved_device_memory)(iommu_grdm_t *func, void *ctxt);
@@ -370,7 +371,7 @@ struct iommu_context {
 
 struct iommu_context_list {
     uint16_t count; /* Context count excluding default context */
-    
+
     /* if count > 0 */
 
     uint64_t *bitmap; /* bitmap of context allocation */

@@ -184,7 +184,7 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
         {
             if (nb_ctx > 0 && nb_ctx < UINT16_MAX)
                 iommu_hwdom_nb_ctx = nb_ctx;
-            else 
+            else
                 printk(XENLOG_INFO "'nb-ctx=%lld' value out of range!\n", nb_ctx);
         }
         else
@@ -270,7 +270,7 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
     other_context_count = hd->other_contexts.count;
     if (other_context_count > 0) {
         /* Initialize context bitmap */
-        hd->other_contexts.bitmap = xzalloc_array(unsigned long, 
+        hd->other_contexts.bitmap = xzalloc_array(unsigned long,
                                                   BITS_TO_LONGS(other_context_count));
         hd->other_contexts.map = xzalloc_array(struct iommu_context,
                                                other_context_count);
@@ -370,7 +370,7 @@ bool iommu_check_context(struct domain *d, u16 ctx_no) {
 
     if (ctx_no == 0)
         return 1; /* Default context always exist. */
-    
+
     if ((ctx_no - 1) >= hd->other_contexts.count)
         return 0; /* out of bounds */
 
@@ -382,7 +382,7 @@ struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
 
     if (!iommu_check_context(d, ctx_no))
         return NULL;
-    
+
     if (ctx_no == 0)
         return &hd->default_ctx;
     else
@@ -572,7 +572,7 @@ int iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
 int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
                       unsigned int flush_flags, u16 ctx_no)
 {
-    const struct domain_iommu *hd = dom_iommu(d);
+    struct domain_iommu *hd = dom_iommu(d);
     int rc;
 
     if ( !is_iommu_enabled(d) || !hd->platform_ops->iotlb_flush ||
@@ -581,11 +581,15 @@ int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
 
     if ( dfn_eq(dfn, INVALID_DFN) )
         return -EINVAL;
-    
-    if ( !iommu_check_context(d, ctx_no) )
+
+    spin_lock(&hd->lock);
+
+    if ( !iommu_check_context(d, ctx_no) ) {
+        spin_unlock(&hd->lock);
         return -ENOENT;
-    
-    rc = iommu_call(hd->platform_ops, iotlb_flush, iommu_get_context(d, ctx_no),
+    }
+
+    rc = iommu_call(hd->platform_ops, iotlb_flush, d, iommu_get_context(d, ctx_no),
                     dfn, page_count, flush_flags);
     if ( unlikely(rc) )
     {
@@ -597,6 +601,8 @@ int iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
         if ( !is_hardware_domain(d) )
             domain_crash(d);
     }
+
+    spin_unlock(&hd->lock);
 
     return rc;
 }
@@ -610,7 +616,7 @@ int iommu_iotlb_flush_all(struct domain *d, unsigned int flush_flags)
          !flush_flags )
         return 0;
 
-    rc = iommu_call(hd->platform_ops, iotlb_flush, d, INVALID_DFN, 0,
+    rc = iommu_call(hd->platform_ops, iotlb_flush, d, NULL, INVALID_DFN, 0,
                     flush_flags | IOMMU_FLUSHF_all);
     if ( unlikely(rc) )
     {
@@ -902,7 +908,7 @@ int _iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no)
 
     /* Assume device is not already bound to a domain */
     ASSERT(!dev->domain);
-    
+
     if ( !iommu_check_context(d, ctx_no) )
     {
         ret = -ENOENT;
@@ -956,24 +962,23 @@ int _iommu_dettach_context(struct domain *d, device_t *dev)
     ASSERT(ctx); /* device is using an invalid context ?
                     dev->context invalid ? */
 
-    ret = iommu_call(dom_iommu(d), dettach, d, dev, ctx);
+    ret = iommu_call(dom_iommu(d)->platform_ops, dettach, d, dev, ctx);
 
     if ( !ret )
     {
         list_del(&dev->context_list);
 
         /** TODO: Do we need to remove the device from domain ?
-         *         Reattaching to something (quarantine, hardware domain ?)
+         *        Reattaching to something (quarantine, hardware domain ?)
          */
-        
+
         /*
          * rcu_lock_domain ?
          * list_del(&dev->domain_list);
          * dev->domain = ?;
          */
     }
-    
-unlock:
+
     pcidevs_unlock();
     return ret;
 }
@@ -1002,7 +1007,7 @@ int _iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
 
     /* Make sure we actually are doing something meaningful */
     BUG_ON(!prev_dom && !next_dom);
-    
+
     /// TODO: Do such cases exists ?
     // /* Platform ops must match */
     // if (dom_iommu(prev_dom)->platform_ops != dom_iommu(next_dom)->platform_ops)
