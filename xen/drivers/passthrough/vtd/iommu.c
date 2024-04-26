@@ -703,7 +703,6 @@ int __must_check iommu_flush_all(void)
     return rc;
 }
 
-///TODO: Rework it (figuring how to do stuff)
 static int __must_check cf_check iommu_flush_iotlb(struct domain *d,
                                                    struct iommu_context *ctx,
                                                    dfn_t dfn,
@@ -715,9 +714,6 @@ static int __must_check cf_check iommu_flush_iotlb(struct domain *d,
     bool flush_dev_iotlb;
     int iommu_domid;
     int ret = 0;
-
-    dfn = INVALID_DFN;
-    page_count = 0;
 
     /*
      * No need pcideves_lock here because we have flush
