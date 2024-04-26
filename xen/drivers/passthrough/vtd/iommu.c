@@ -148,6 +148,8 @@ static int context_set_domain_id(struct context_entry *context,
     else
         i = convert_domid(iommu, domid);
 
+    printk("context_set_domain_id: %hu -> %hu\n", domid, i);
+
     if ( context )
     {
         context->hi &= ~(((1 << DID_FIELD_WIDTH) - 1) << DID_HIGH_OFFSET);
@@ -727,13 +729,20 @@ static int __must_check cf_check iommu_flush_iotlb(struct domain *d,
 
         iommu = drhd->iommu;
 
-        if ( ctx && !test_bit(iommu->index, ctx->arch.vtd.iommu_bitmap) )
-            continue;
+        if ( ctx )
+        {
+            //if ( !test_bit(iommu->index, ctx->arch.vtd.iommu_bitmap) )
+            //    continue;
+
+            iommu_domid = get_iommu_did(ctx->arch.vtd.didmap[iommu->index], iommu, true);
+
+            if ( iommu_domid == -1 )
+                continue;
+        }
+        else
+            iommu_domid = 0;
 
         flush_dev_iotlb = !!find_ats_dev_drhd(iommu);
-        iommu_domid = get_iommu_did(ctx->arch.vtd.didmap[iommu->index], iommu, true);
-        if ( iommu_domid == -1 )
-            continue;
 
         if ( !page_count || (page_count & (page_count - 1)) ||
              dfn_eq(dfn, INVALID_DFN) || !IS_ALIGNED(dfn_x(dfn), page_count) )
@@ -1436,16 +1445,16 @@ static void __hwdom_init cf_check intel_iommu_hwdom_init(struct domain *d)
  * @param devfn PCI device function (may be different to pdev)
  */
 int apply_context_single(struct domain *domain, struct iommu_context *ctx,
-                         struct vtd_iommu *iommu, uint8_t devfn,
-                         const struct pci_dev *pdev)
+                         struct vtd_iommu *iommu, uint8_t bus, uint8_t devfn)
 {
     struct context_entry *context, *context_entries, lctxt;
     __uint128_t res, old;
     uint64_t maddr;
     uint16_t seg = iommu->drhd->segment, did;
-    uint8_t bus = pdev->bus;
     int rc, ret;
     bool flush_dev_iotlb, overwrite_entry = false;
+
+    printk("apply_context_single: %hud %huc %pp\n", domain->domain_id, ctx->id, &PCI_SBDF(seg, bus, devfn));
 
     ASSERT(pcidevs_locked());
     spin_lock(&iommu->lock);
@@ -1455,6 +1464,7 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
     old = (lctxt = *context).full;
 
     did = ctx->arch.vtd.didmap[iommu->index];
+    printk("apply_context_single: did=%hu\n", did);
 
     if ( context_present(*context) )
     {
@@ -1532,6 +1542,7 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
     set_bit(iommu->index, ctx->arch.vtd.iommu_bitmap);
 
     unmap_vtd_domain_page(context_entries);
+    spin_unlock(&iommu->lock);
 
     if ( !seg && !rc )
         rc = me_wifi_quirk(domain, bus, devfn, did, 0, ctx);
@@ -1540,12 +1551,12 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
 
     unlock:
         unmap_vtd_domain_page(context_entries);
+        spin_unlock(&iommu->lock);
         return rc;
 }
 
-static int apply_context(struct domain *domain,
-                         struct iommu_context *ctx,
-                         struct pci_dev *pdev, u8 devfn)
+int apply_context(struct domain *d, struct iommu_context *ctx,
+                  struct pci_dev *pdev, u8 devfn)
 {
     const struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
     int ret = 0;
@@ -1555,7 +1566,7 @@ static int apply_context(struct domain *domain,
 
     ASSERT(pcidevs_locked());
 
-    ret = apply_context_single(domain, ctx, drhd->iommu, devfn, pdev);
+    ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, devfn);
 
     if ( !ret && devfn == pdev->devfn )
         pci_vtd_quirk(pdev);
@@ -1572,6 +1583,7 @@ int unapply_context_single(struct domain *domain, struct iommu_context *ctx,
     bool flush_dev_iotlb;
 
     ASSERT(pcidevs_locked());
+    spin_lock(&iommu->lock);
 
     maddr = bus_to_context_maddr(iommu, bus);
     context_entries = (struct context_entry *)map_vtd_domain_page(maddr);
@@ -1580,6 +1592,7 @@ int unapply_context_single(struct domain *domain, struct iommu_context *ctx,
     if ( !context_present(*context) )
     {
         unmap_vtd_domain_page(context_entries);
+        spin_unlock(&iommu->lock);
         return 0;
     }
 
@@ -1629,6 +1642,7 @@ int unapply_context_single(struct domain *domain, struct iommu_context *ctx,
             domain_crash(domain);
     }
 
+    spin_unlock(&iommu->lock);
     return rc;
 }
 
@@ -1908,8 +1922,7 @@ static int cf_check intel_iommu_enable_device(struct pci_dev *pdev)
 static int __hwdom_init cf_check setup_hwdom_device(
     u8 devfn, struct pci_dev *pdev)
 {
-    return apply_context(pdev->domain, iommu_default_context(pdev->domain),
-                         pdev, devfn);
+    return _iommu_attach_context(hardware_domain, pdev, 0);
 }
 
 void clear_fault_bits(struct vtd_iommu *iommu)
@@ -2109,7 +2122,7 @@ static struct iommu_state {
 
 static void arch_iommu_dump_domain_contexts(struct domain *d)
 {
-    unsigned int i;
+    unsigned int i, iommu_no;
     struct pci_dev *pdev;
     struct iommu_context *ctx;
     struct domain_iommu *hd = dom_iommu(d);
@@ -2122,8 +2135,13 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
     {
         if (iommu_check_context(d, i))
         {
-            printk(" Context %d\n", i);
             ctx = iommu_get_context(d, i);
+            printk(" Context %d (%"PRIx64")\n", i, ctx->arch.vtd.pgd_maddr);
+
+            for (iommu_no = 0; iommu_no < nr_iommus; iommu_no++)
+                printk("  IOMMU %hu (used=%u; did=%hu)\n", iommu_no,
+                       test_bit(iommu_no, ctx->arch.vtd.iommu_bitmap),
+                       ctx->arch.vtd.didmap[iommu_no]);
 
             list_for_each_entry(pdev, &ctx->devices, context_list)
             {
@@ -2571,7 +2589,7 @@ static int intel_iommu_reattach(struct domain *d, struct pci_dev *pdev,
     if (!pdev || !drhd)
         return -EINVAL;
 
-    ret = apply_context_single(d, ctx, drhd->iommu, pdev->devfn, pdev);
+    ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, pdev->devfn);
 
     if ( ret )
         return ret;

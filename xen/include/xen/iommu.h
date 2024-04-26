@@ -163,6 +163,9 @@ enum
 long __must_check iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                             unsigned long page_count, unsigned int flags,
                             unsigned int *flush_flags, u16 ctx_no);
+long __must_check _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
+                             unsigned long page_count, unsigned int flags,
+                             unsigned int *flush_flags, u16 ctx_no);
 long __must_check iommu_unmap(struct domain *d, dfn_t dfn0,
                               unsigned long page_count, unsigned int flags,
                               unsigned int *flush_flags, u16 ctx_no);
@@ -473,6 +476,9 @@ int iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
                            device_t *dev, u16 ctx_no);
 int iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no);
 int iommu_dettach_context(struct domain *d, device_t *dev);
+
+int _iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no);
+int _iommu_dettach_context(struct domain *d, device_t *dev);
 
 /*
  * The purpose of the iommu_dont_flush_iotlb optional cpu flag is to

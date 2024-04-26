@@ -317,7 +317,9 @@ void __hwdom_init iommu_hwdom_init(struct domain *d)
 
     register_keyhandler('o', &iommu_dump_page_tables, "dump iommu page tables", 0);
 
+    spin_lock(&hd->lock);
     iommu_vcall(hd->platform_ops, hwdom_init, d);
+    spin_unlock(&hd->lock);
 }
 
 void iommu_domain_destroy(struct domain *d)
@@ -389,7 +391,7 @@ struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
         return &hd->other_contexts.map[ctx_no - 1];
 }
 
-long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
+long _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                unsigned long page_count, unsigned int flags,
                unsigned int *flush_flags, u16 ctx_no)
 {
@@ -405,8 +407,6 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
         return -ENOENT;
 
     ASSERT(!IOMMUF_order(flags));
-
-    spin_lock(&hd->lock);
 
     for ( i = 0; i < page_count; i += 1UL << order )
     {
@@ -453,8 +453,21 @@ long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
          !iommu_iotlb_flush_all(d, *flush_flags) )
         *flush_flags = 0;
 
-    spin_unlock(&hd->lock);
     return rc;
+}
+
+long iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
+               unsigned long page_count, unsigned int flags,
+               unsigned int *flush_flags, u16 ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    long ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_map(d, dfn0, mfn0, page_count, flags, flush_flags, ctx_no);
+    spin_unlock(&hd->lock);
+
+    return ret;
 }
 
 int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
@@ -906,8 +919,10 @@ int _iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no)
 
     pcidevs_lock();
 
+    printk("iommu_attach_context: %hud %pp %huc\n", d->domain_id, dev, ctx_no);
+
     /* Assume device is not already bound to a domain */
-    ASSERT(!dev->domain);
+    //ASSERT(!dev->domain);
 
     if ( !iommu_check_context(d, ctx_no) )
     {
@@ -1004,6 +1019,11 @@ int _iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
     struct iommu_context *prev_ctx, *next_ctx;
     int ret;
     bool same_domain;
+
+    printk("iommu_reattach_context: prev=%hu next=%hu dev=%p ctx=%d\n",
+           prev_dom ? prev_dom->domain_id : ~0,
+           next_dom ? next_dom->domain_id : ~0,
+           dev, ctx_no);
 
     /* Make sure we actually are doing something meaningful */
     BUG_ON(!prev_dom && !next_dom);

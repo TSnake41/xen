@@ -117,7 +117,7 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
 
 static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
-    int ret;
+    int ret, flush_ret;
     struct page_info *page = NULL;
     mfn_t mfn;
     unsigned int flags;
@@ -170,13 +170,20 @@ static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
 
     op->map_pages.mapped = i;
 
+    flush_ret = iommu_iotlb_flush(d, _dfn(op->map_pages.dfn),
+                                  op->map_pages.nr_pages, flush_flags,
+                                  op->ctx_no);
+
+    if ( flush_ret )
+        printk("Flush operation failed (%d)\n", flush_ret);
+
     return ret;
 }
 
 static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
     mfn_t mfn;
-    int ret;
+    int ret, flush_ret;
     unsigned int flags;
     unsigned int flush_flags = 0;
     size_t i = 0;
@@ -211,6 +218,13 @@ static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
     }
 
     op->unmap_pages.unmapped = i;
+
+    flush_ret = iommu_iotlb_flush(d, _dfn(op->unmap_pages.dfn),
+                                  op->unmap_pages.nr_pages, flush_flags,
+                                  op->ctx_no);
+
+    if ( flush_ret )
+        printk("Flush operation failed (%d)\n", flush_ret);
 
     return ret;
 }
@@ -286,10 +300,6 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 
     if ( unlikely(copy_to_guest(arg, &op, 1)) )
         return -EFAULT;
-
-    printk("Doing flush_all\n");
-    iommu_flush_all(); // HACK
-    printk("Done flush_all\n");
 
     return ret;
 }

@@ -377,8 +377,8 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
              */
             if ( iomem_access_permitted(d, s, s) )
             {
-                rc = iommu_map(d, _dfn(s), _mfn(s), 1, perms,
-                               &info->flush_flags, 0);
+                rc = _iommu_map(d, _dfn(s), _mfn(s), 1, perms,
+                                &info->flush_flags, 0);
                 if ( rc < 0 )
                     break;
                 /* Must map a frame at least, which is what we request for. */
@@ -387,8 +387,8 @@ static int __hwdom_init cf_check identity_map(unsigned long s, unsigned long e,
             }
             s++;
         }
-        while ( (rc = iommu_map(d, _dfn(s), _mfn(s), e - s + 1,
-                                perms, &info->flush_flags, 0)) > 0 )
+        while ( (rc = _iommu_map(d, _dfn(s), _mfn(s), e - s + 1,
+                                 perms, &info->flush_flags, 0)) > 0 )
         {
             s += rc;
             process_pending_softirqs();
@@ -583,8 +583,6 @@ domid_t iommu_alloc_domid(unsigned long *map)
      */
     static unsigned int start;
     unsigned int idx = find_next_zero_bit(map, UINT16_MAX - DOMID_MASK, start);
-
-    ASSERT(pcidevs_locked());
 
     if ( idx >= UINT16_MAX - DOMID_MASK )
         idx = find_first_zero_bit(map, UINT16_MAX - DOMID_MASK);
