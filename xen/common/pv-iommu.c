@@ -19,9 +19,6 @@
 
 #define PVIOMMU_MAX_PAGES 256 /* Move to Kconfig ? */
 
-// HACK: Flush all IOMMUs
-int iommu_flush_all(void);
-
 static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
                            struct page_info **page, int readonly)
 {
@@ -117,7 +114,7 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
 
 static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
-    int ret, flush_ret;
+    int ret = 0, flush_ret;
     struct page_info *page = NULL;
     mfn_t mfn;
     unsigned int flags;
@@ -130,10 +127,10 @@ static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
     if ( !iommu_check_context(d, op->ctx_no) )
         return -EINVAL;
 
-    printk("Mapping gfn:%lx-%lx to dfn:%lx-%lx on %hu\n",
-           op->map_pages.gfn, op->map_pages.gfn + op->map_pages.nr_pages - 1,
-           op->map_pages.dfn, op->map_pages.dfn + op->map_pages.nr_pages - 1,
-           op->ctx_no);
+    //printk("Mapping gfn:%lx-%lx to dfn:%lx-%lx on %hu\n",
+    //       op->map_pages.gfn, op->map_pages.gfn + op->map_pages.nr_pages - 1,
+    //       op->map_pages.dfn, op->map_pages.dfn + op->map_pages.nr_pages - 1,
+    //       op->ctx_no);
 
     flags = 0;
 
@@ -183,7 +180,7 @@ static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
 static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
     mfn_t mfn;
-    int ret, flush_ret;
+    int ret = 0, flush_ret;
     unsigned int flags;
     unsigned int flush_flags = 0;
     size_t i = 0;
@@ -194,9 +191,9 @@ static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
     if ( !iommu_check_context(d, op->ctx_no) )
         return -EINVAL;
 
-    printk("Unmapping dfn:%lx-%lx on %hu\n",
-           op->unmap_pages.dfn, op->unmap_pages.dfn + op->unmap_pages.nr_pages - 1,
-           op->ctx_no);
+    //printk("Unmapping dfn:%lx-%lx on %hu\n",
+    //       op->unmap_pages.dfn, op->unmap_pages.dfn + op->unmap_pages.nr_pages - 1,
+    //       op->ctx_no);
 
     for (i = 0; i < op->unmap_pages.nr_pages; i++)
     {
