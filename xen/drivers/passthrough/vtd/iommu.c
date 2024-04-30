@@ -1918,6 +1918,12 @@ static int cf_check intel_iommu_enable_device(struct pci_dev *pdev)
 static int __hwdom_init cf_check setup_hwdom_device(
     u8 devfn, struct pci_dev *pdev)
 {
+    if (pdev->type == DEV_TYPE_PCI_HOST_BRIDGE ||
+        pdev->type == DEV_TYPE_PCIe_BRIDGE ||
+        pdev->type == DEV_TYPE_PCIe2PCI_BRIDGE ||
+        pdev->type == DEV_TYPE_LEGACY_PCI_BRIDGE)
+        return 0;
+
     return _iommu_attach_context(hardware_domain, pdev, 0);
 }
 
