@@ -317,9 +317,7 @@ void __hwdom_init iommu_hwdom_init(struct domain *d)
 
     register_keyhandler('o', &iommu_dump_page_tables, "dump iommu page tables", 0);
 
-    spin_lock(&hd->lock);
     iommu_vcall(hd->platform_ops, hwdom_init, d);
-    spin_unlock(&hd->lock);
 }
 
 void iommu_domain_destroy(struct domain *d)
@@ -418,10 +416,7 @@ long _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
         if ( (flags & IOMMUF_preempt) &&
              ((!(++j & 0xfff) && general_preempt_check()) ||
               i > LONG_MAX - (1UL << order)) )
-        {
-            spin_unlock(&hd->lock);
             return i;
-        }
 
         rc = iommu_call(hd->platform_ops, map_page, d, dfn, mfn,
                         flags | IOMMUF_order(order), flush_flags,
@@ -436,7 +431,7 @@ long _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
                    d->domain_id, dfn_x(dfn), mfn_x(mfn), rc);
 
         /* while statement to satisfy __must_check */
-        while ( iommu_unmap(d, dfn0, i, 0, flush_flags, ctx_no) )
+        while ( _iommu_unmap(d, dfn0, i, 0, flush_flags, ctx_no) )
             break;
 
         if ( !is_hardware_domain(d) )
@@ -477,7 +472,7 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
     int rc;
 
     ASSERT(!(flags & IOMMUF_preempt));
-    rc = iommu_map(d, dfn, mfn, page_count, flags, &flush_flags, 0);
+    rc = _iommu_map(d, dfn, mfn, page_count, flags, &flush_flags, 0);
 
     if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
         rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags, 0);
@@ -488,6 +483,20 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
 long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
                  unsigned int flags, unsigned int *flush_flags,
                  u16 ctx_no)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    long ret;
+
+    spin_lock(&hd->lock);
+    ret = _iommu_unmap(d, dfn0, page_count, flags, flush_flags, ctx_no);
+    spin_unlock(&hd->lock);
+
+    return ret;
+}
+
+long _iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
+                  unsigned int flags, unsigned int *flush_flags,
+                  u16 ctx_no)
 {
     struct domain_iommu *hd = dom_iommu(d);
     unsigned long i;
@@ -501,7 +510,6 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
         return -ENOENT;
 
     ASSERT(!(flags & ~IOMMUF_preempt));
-    spin_lock(&hd->lock);
 
     for ( i = 0; i < page_count; i += 1UL << order )
     {
@@ -513,10 +521,7 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
         if ( (flags & IOMMUF_preempt) &&
              ((!(++j & 0xfff) && general_preempt_check()) ||
               i > LONG_MAX - (1UL << order)) )
-        {
-            spin_unlock(&hd->lock);
             return i;
-        }
 
         err = iommu_call(hd->platform_ops, unmap_page, d, dfn,
                          flags | IOMMUF_order(order), flush_flags,
@@ -548,7 +553,6 @@ long iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
          !iommu_iotlb_flush_all(d, *flush_flags) )
         *flush_flags = 0;
 
-    spin_unlock(&hd->lock);
     return rc;
 }
 

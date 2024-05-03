@@ -169,7 +169,9 @@ long __must_check _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
 long __must_check iommu_unmap(struct domain *d, dfn_t dfn0,
                               unsigned long page_count, unsigned int flags,
                               unsigned int *flush_flags, u16 ctx_no);
-
+long __must_check _iommu_unmap(struct domain *d, dfn_t dfn0,
+                               unsigned long page_count, unsigned int flags,
+                               unsigned int *flush_flags, u16 ctx_no);
 int __must_check iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
                                   unsigned long page_count,
                                   unsigned int flags);
