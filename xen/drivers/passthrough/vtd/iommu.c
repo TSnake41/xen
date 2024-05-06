@@ -1446,7 +1446,7 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
     struct context_entry *context, *context_entries, lctxt;
     __uint128_t res, old;
     uint64_t maddr;
-    uint16_t seg = iommu->drhd->segment, did;
+    uint16_t seg = iommu->drhd->segment, prev_did = 0, did;
     int rc, ret;
     bool flush_dev_iotlb, overwrite_entry = false;
 
@@ -1464,6 +1464,7 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
 
     if ( context_present(*context) )
     {
+        prev_did = context_domain_id(lctxt);
         overwrite_entry = true;
     }
 
@@ -1516,10 +1517,10 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
 
     iommu_sync_cache(context, sizeof(struct context_entry));
 
-    rc = iommu_flush_context_device(iommu, did, PCI_BDF(bus, devfn),
+    rc = iommu_flush_context_device(iommu, prev_did, PCI_BDF(bus, devfn),
                                     DMA_CCMD_MASK_NOBIT, !overwrite_entry);
     flush_dev_iotlb = !!find_ats_dev_drhd(iommu);
-    ret = iommu_flush_iotlb_dsi(iommu, did, !overwrite_entry, flush_dev_iotlb);
+    ret = iommu_flush_iotlb_dsi(iommu, prev_did, !overwrite_entry, flush_dev_iotlb);
 
     /*
      * The current logic for returns:
