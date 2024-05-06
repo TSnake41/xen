@@ -727,8 +727,8 @@ static int __must_check cf_check iommu_flush_iotlb(struct domain *d,
 
         if ( ctx )
         {
-            //if ( !test_bit(iommu->index, ctx->arch.vtd.iommu_bitmap) )
-            //    continue;
+            if ( !test_bit(iommu->index, ctx->arch.vtd.iommu_bitmap) )
+                continue;
 
             iommu_domid = get_iommu_did(ctx->arch.vtd.didmap[iommu->index], iommu, true);
 
