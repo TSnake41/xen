@@ -1561,6 +1561,15 @@ int apply_context(struct domain *d, struct iommu_context *ctx,
     if ( !drhd )
         return -EINVAL;
 
+    if ( pdev->type == DEV_TYPE_PCI_HOST_BRIDGE ||
+         pdev->type == DEV_TYPE_PCIe_BRIDGE ||
+         pdev->type == DEV_TYPE_PCIe2PCI_BRIDGE ||
+         pdev->type == DEV_TYPE_LEGACY_PCI_BRIDGE )
+    {
+        printk(XENLOG_WARNING VTDPREFIX " Ignoring apply_context on PCI bridge\n");
+        return 0;
+    }
+
     ASSERT(pcidevs_locked());
 
     ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, devfn);
