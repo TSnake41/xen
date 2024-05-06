@@ -1565,6 +1565,9 @@ int apply_context(struct domain *d, struct iommu_context *ctx,
 
     ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, devfn);
 
+    if ( !ret && ats_device(pdev, drhd) > 0 )
+        enable_ats_device(pdev, &drhd->iommu->ats_devices);
+
     if ( !ret && devfn == pdev->devfn )
         pci_vtd_quirk(pdev);
 
@@ -2495,7 +2498,7 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
         return -ENOMEM;
 
     ctx->arch.vtd.iommu_bitmap = xzalloc_array(unsigned long,
-                                              BITS_TO_LONGS(nr_iommus));
+                                               BITS_TO_LONGS(nr_iommus));
     if ( !ctx->arch.vtd.iommu_bitmap )
         return -ENOMEM;
 
