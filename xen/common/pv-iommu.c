@@ -107,7 +107,7 @@ static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)
     pdev = pci_get_pdev(d, PCI_SBDF(dev.seg, dev.bus, dev.devfn));
 
     if ( !pdev )
-        return !ENOENT;
+        return -ENOENT;
 
     return iommu_reattach_context(d, d, pdev, op->ctx_no);
 }
