@@ -19,6 +19,7 @@
 #ifndef _IOMMU_H_
 #define _IOMMU_H_
 
+#include "xen/arena.h"
 #include <xen/mm-frame.h>
 #include <xen/init.h>
 #include <xen/page-defs.h>

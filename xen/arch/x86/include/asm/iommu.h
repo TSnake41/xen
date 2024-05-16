@@ -2,6 +2,7 @@
 #ifndef __ARCH_X86_IOMMU_H__
 #define __ARCH_X86_IOMMU_H__
 
+#include <xen/arena.h>
 #include <xen/bitmap.h>
 #include <xen/errno.h>
 #include <xen/list.h>
@@ -61,6 +62,8 @@ struct arch_iommu
     } pgtables;
 
     struct list_head identity_maps;
+
+    struct page_arena pt_arena;
 
     union {
         /* Intel VT-d */

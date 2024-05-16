@@ -12,6 +12,8 @@
  * this program; If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "asm/page.h"
+#include "xen/arena.h"
 #include <xen/keyhandler.h>
 #include <xen/lib.h>
 #include <xen/pci.h>
@@ -212,6 +214,7 @@ int arch_iommu_domain_init(struct domain *d)
     struct domain_iommu *hd = dom_iommu(d);
 
     INIT_LIST_HEAD(&hd->arch.identity_maps);
+    arena_initialize(&hd->arch.pt_arena, NULL, 0);
 
     return 0;
 }
@@ -629,7 +632,10 @@ int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
 
     while ( (pg = page_list_remove_head(&ctx->arch.pgtables)) )
     {
-        free_domheap_page(pg);
+        if (ctx->id == 0)
+            free_domheap_page(pg);
+        else
+            arena_free_page(&hd->arch.pt_arena, page_to_mfn(pg));
 
         if ( !(++done & 0xff) && general_preempt_check() )
             return -ERESTART;
@@ -651,7 +657,14 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
         memflags = MEMF_node(hd->node);
 #endif
 
-    pg = alloc_domheap_page(NULL, memflags);
+    if (ctx->id == 0)
+        pg = alloc_domheap_page(NULL, memflags);
+    else
+    {
+        mfn_t mfn = arena_allocate_page(&hd->arch.pt_arena);
+        pg = mfn_valid(mfn) ? mfn_to_page(mfn) : NULL;
+    }
+
     if ( !pg )
         return NULL;
 

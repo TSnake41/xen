@@ -2142,6 +2142,9 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
     struct iommu_context *ctx;
     struct domain_iommu *hd = dom_iommu(d);
 
+    printk("d%hu arena page usage: %d", d->domain_id,
+           atomic_read(&hd->arch.pt_arena.used_pages));
+
     printk("d%hu contexts\n", d->domain_id);
 
     spin_lock(&hd->lock);
@@ -2541,6 +2544,7 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
 static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
     struct acpi_drhd_unit *drhd;
+    pcidevs_lock();
 
     if (ctx->arch.vtd.didmap)
     {
@@ -2553,6 +2557,7 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
         xfree(ctx->arch.vtd.didmap);
     }
 
+    pcidevs_unlock();
     return arch_iommu_context_teardown(d, ctx, flags);
 }
 
