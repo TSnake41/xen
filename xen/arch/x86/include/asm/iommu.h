@@ -2,7 +2,6 @@
 #ifndef __ARCH_X86_IOMMU_H__
 #define __ARCH_X86_IOMMU_H__
 
-#include <xen/arena.h>
 #include <xen/bitmap.h>
 #include <xen/errno.h>
 #include <xen/list.h>
@@ -12,6 +11,8 @@
 #include <asm/apicdef.h>
 #include <asm/cache.h>
 #include <asm/processor.h>
+
+#include "arena.h"
 
 #define DEFAULT_DOMAIN_ADDRESS_WIDTH 48
 
@@ -39,6 +40,9 @@ struct arch_iommu_context
     spinlock_t pgtables_lock;
     struct page_list_head pgtables;
 
+    /* Queue for freeing pages */
+    struct page_list_head free_queue;
+
     union {
         /* Intel VT-d */
         struct {
@@ -63,7 +67,7 @@ struct arch_iommu
 
     struct list_head identity_maps;
 
-    struct page_arena pt_arena;
+    struct iommu_arena pt_arena;
 
     union {
         /* Intel VT-d */
@@ -162,6 +166,7 @@ void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg);
 bool iommu_unity_region_ok(const char *prefix, mfn_t start, mfn_t end);
 int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
 int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
+int arch_iommu_flush_free_queue(struct domain *d, struct iommu_context *ctx);
 
 #endif /* !__ARCH_X86_IOMMU_H__ */
 /*

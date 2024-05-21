@@ -757,6 +757,9 @@ static int __must_check cf_check iommu_flush_iotlb(struct domain *d,
             ret = rc;
     }
 
+    if ( !ret && ctx )
+        arch_iommu_flush_free_queue(d, ctx);
+
     return ret;
 }
 
@@ -2142,9 +2145,6 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
     struct iommu_context *ctx;
     struct domain_iommu *hd = dom_iommu(d);
 
-    printk("d%hu arena page usage: %d", d->domain_id,
-           atomic_read(&hd->arch.pt_arena.used_pages));
-
     printk("d%hu contexts\n", d->domain_id);
 
     spin_lock(&hd->lock);
@@ -2176,6 +2176,10 @@ static void arch_iommu_dump_contexts(unsigned char key)
     struct domain *d;
 
     for_each_domain(d) {
+        struct domain_iommu *hd = dom_iommu(d);
+        printk("d%hu arena page usage: %d\n", d->domain_id,
+               atomic_read(&hd->arch.pt_arena.used_pages));
+
         arch_iommu_dump_domain_contexts(d);
     }
 }

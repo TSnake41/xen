@@ -13,7 +13,6 @@
  */
 
 #include "asm/page.h"
-#include "xen/arena.h"
 #include <xen/keyhandler.h>
 #include <xen/lib.h>
 #include <xen/pci.h>
@@ -38,6 +37,7 @@
 #include <asm/pt-contig-markers.h>
 #include <asm/setup.h>
 #include <asm/iommu.h>
+#include <asm/arena.h>
 
 const struct iommu_init_ops *__initdata iommu_init_ops;
 struct iommu_ops __ro_after_init iommu_ops;
@@ -197,6 +197,9 @@ int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 fla
 {
     INIT_PAGE_LIST_HEAD(&ctx->arch.pgtables);
     spin_lock_init(&ctx->arch.pgtables_lock);
+
+    INIT_PAGE_LIST_HEAD(&ctx->arch.free_queue);
+
     return 0;
 }
 
@@ -209,12 +212,23 @@ int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32
     return 0;
 }
 
+int arch_iommu_flush_free_queue(struct domain *d, struct iommu_context *ctx)
+{
+    struct page_info *pg;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    while ( (pg = page_list_remove_head(&ctx->arch.free_queue)) )
+        iommu_arena_free_page(&hd->arch.pt_arena, pg);
+
+    return 0;
+}
+
 int arch_iommu_domain_init(struct domain *d)
 {
     struct domain_iommu *hd = dom_iommu(d);
 
     INIT_LIST_HEAD(&hd->arch.identity_maps);
-    arena_initialize(&hd->arch.pt_arena, NULL, 0);
+    iommu_arena_initialize(&hd->arch.pt_arena, NULL, 0);
 
     return 0;
 }
@@ -635,7 +649,7 @@ int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
         if (ctx->id == 0)
             free_domheap_page(pg);
         else
-            arena_free_page(&hd->arch.pt_arena, page_to_mfn(pg));
+            iommu_arena_free_page(&hd->arch.pt_arena, pg);
 
         if ( !(++done & 0xff) && general_preempt_check() )
             return -ERESTART;
@@ -660,10 +674,7 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
     if (ctx->id == 0)
         pg = alloc_domheap_page(NULL, memflags);
     else
-    {
-        mfn_t mfn = arena_allocate_page(&hd->arch.pt_arena);
-        pg = mfn_valid(mfn) ? mfn_to_page(mfn) : NULL;
-    }
+        pg = iommu_arena_allocate_page(&hd->arch.pt_arena);
 
     if ( !pg )
         return NULL;
@@ -744,9 +755,17 @@ void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg)
     page_list_del(pg, &ctx->arch.pgtables);
     spin_unlock(&ctx->arch.pgtables_lock);
 
-    page_list_add_tail(pg, &per_cpu(free_pgt_list, cpu));
+    if ( !ctx->id )
+    {
+        page_list_add_tail(pg, &per_cpu(free_pgt_list, cpu));
 
-    tasklet_schedule(&per_cpu(free_pgt_tasklet, cpu));
+        tasklet_schedule(&per_cpu(free_pgt_tasklet, cpu));
+    }
+    else
+    {
+        page_list_add_tail(pg, &ctx->arch.free_queue);
+    }
+
 }
 
 static int cf_check cpu_callback(

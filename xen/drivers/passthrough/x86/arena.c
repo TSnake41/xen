@@ -3,10 +3,10 @@
  * Simple arena-based page allocator.
  *
  * Allocate a large block using alloc_domheam_pages and allocate single pages
- * using arena_allocate_page and arena_free_page functions.
+ * using iommu_arena_allocate_page and iommu_arena_free_page functions.
  *
  * Concurrent {allocate/free}_page is thread-safe
- * arena_teardown during {allocate/free}_page is not thread-safe.
+ * iommu_arena_teardown during {allocate/free}_page is not thread-safe.
  *
  * Written by Teddy Astie <teddy.astie@vates.tech>
  */
@@ -19,31 +19,31 @@
 #include <xen/config.h>
 #include <xen/mm-frame.h>
 #include <xen/mm.h>
-#include <xen/arena.h>
+#include "arena.h"
 
 /* Maximum of scan tries if the bit found not available */
 #define ARENA_TSL_MAX_TRIES 5
 
-int arena_initialize(struct page_arena *arena, struct domain *d, unsigned int memflags)
+int iommu_arena_initialize(struct iommu_arena *arena, struct domain *d, unsigned int memflags)
 {
     struct page_info *page;
 
     /* TODO: Maybe allocate differently ? */
-    page = alloc_domheap_pages(d, ARENA_PAGE_ORDER, memflags);
+    page = alloc_domheap_pages(d, IOMMU_ARENA_PAGE_ORDER, memflags);
 
     if ( !page )
         return -ENOMEM;
 
     arena->region_start = page_to_mfn(page);
     _atomic_set(&arena->used_pages, 0);
-    bitmap_zero(arena->map, ARENA_PAGE_COUNT);
+    bitmap_zero(arena->map, IOMMU_ARENA_PAGE_COUNT);
 
-    printk(XENLOG_DEBUG "ARENA: Allocated arena (%llu pages, start=%"PRI_mfn")\n",
-           ARENA_PAGE_COUNT, mfn_x(arena->region_start));
+    printk(XENLOG_DEBUG "IOMMU: Allocated arena (%llu pages, start=%"PRI_mfn")\n",
+           IOMMU_ARENA_PAGE_COUNT, mfn_x(arena->region_start));
     return 0;
 }
 
-int arena_teardown(struct page_arena *arena, bool check)
+int iommu_arena_teardown(struct iommu_arena *arena, bool check)
 {
     BUG_ON(mfn_x(arena->region_start) == 0);
 
@@ -51,33 +51,33 @@ int arena_teardown(struct page_arena *arena, bool check)
     if ( check && (atomic_read(&arena->used_pages) > 0) )
         return -EBUSY;
 
-    free_domheap_pages(mfn_to_page(arena->region_start), ARENA_PAGE_ORDER);
+    free_domheap_pages(mfn_to_page(arena->region_start), IOMMU_ARENA_PAGE_ORDER);
 
     arena->region_start = _mfn(0);
     _atomic_set(&arena->used_pages, 0);
-    bitmap_fill(arena->map, ARENA_PAGE_COUNT);
+    bitmap_fill(arena->map, IOMMU_ARENA_PAGE_COUNT);
 
     return 0;
 }
 
-mfn_t arena_allocate_page(struct page_arena *arena)
+struct page_info *iommu_arena_allocate_page(struct iommu_arena *arena)
 {
     unsigned int index;
     unsigned int tsl_tries = 0;
 
     BUG_ON(mfn_x(arena->region_start) == 0);
 
-    if ( atomic_read(&arena->used_pages) == ARENA_PAGE_COUNT )
+    if ( atomic_read(&arena->used_pages) == IOMMU_ARENA_PAGE_COUNT )
         /* All pages used */
-        return INVALID_MFN;
+        return NULL;
 
     do
     {
-        index = find_first_zero_bit(arena->map, ARENA_PAGE_COUNT);
+        index = find_first_zero_bit(arena->map, IOMMU_ARENA_PAGE_COUNT);
 
-        if ( index >= ARENA_PAGE_COUNT )
+        if ( index >= IOMMU_ARENA_PAGE_COUNT )
             /* No more free pages */
-            return INVALID_MFN;
+            return NULL;
 
         /*
          * While there shouldn't be a lot of retries in practice, this loop
@@ -90,7 +90,7 @@ mfn_t arena_allocate_page(struct page_arena *arena)
         if ( unlikely(tsl_tries == ARENA_TSL_MAX_TRIES) )
         {
             printk(XENLOG_ERR "ARENA: Too many TSL retries !");
-            return INVALID_MFN;
+            return NULL;
         }
 
         /* Make sure that the bit we found is still free */
@@ -98,37 +98,49 @@ mfn_t arena_allocate_page(struct page_arena *arena)
 
     atomic_inc(&arena->used_pages);
 
-    return mfn_add(arena->region_start, index);
+    return mfn_to_page(mfn_add(arena->region_start, index));
 }
 
-bool arena_free_page(struct page_arena *arena, mfn_t page)
+bool iommu_arena_free_page(struct iommu_arena *arena, struct page_info *page)
 {
     unsigned long index;
+    mfn_t frame;
 
-    /* Check if page belongs to our arena */
-    if ( (mfn_x(page) < mfn_x(arena->region_start))
-        || (mfn_x(page) >= (mfn_x(arena->region_start) + ARENA_PAGE_COUNT)) )
+    if ( !page )
     {
-        printk(XENLOG_WARNING
-               "ARENA: Trying to free outside arena region [mfn=%"PRI_mfn"]",
-               mfn_x(page));
+        printk(XENLOG_WARNING "IOMMU: Trying to free NULL page");
         WARN();
         return false;
     }
 
-    index = mfn_x(page) - mfn_x(arena->region_start);
+    frame = page_to_mfn(page);
+
+    /* Check if page belongs to our arena */
+    if ( (mfn_x(frame) < mfn_x(arena->region_start))
+        || (mfn_x(frame) >= (mfn_x(arena->region_start) + IOMMU_ARENA_PAGE_COUNT)) )
+    {
+        printk(XENLOG_WARNING
+               "IOMMU: Trying to free outside arena region [mfn=%"PRI_mfn"]",
+               mfn_x(frame));
+        WARN();
+        return false;
+    }
+
+    index = mfn_x(frame) - mfn_x(arena->region_start);
 
     /* Sanity check in case of underflow. */
-    ASSERT(index < ARENA_PAGE_COUNT);
+    ASSERT(index < IOMMU_ARENA_PAGE_COUNT);
 
     if ( !test_and_clear_bit(index, arena->map) )
     {
-        /* Bit was free during our arena_free_page, which means that
-           either this page was never allocated, or we are in a double-free
-           situation. */
+        /*
+         * Bit was free during our arena_free_page, which means that
+         * either this page was never allocated, or we are in a double-free
+         * situation.
+         */
         printk(XENLOG_WARNING
-               "ARENA: Freeing non-allocated region (double-free?) [mfn=%"PRI_mfn"]",
-               mfn_x(page));
+               "IOMMU: Freeing non-allocated region (double-free?) [mfn=%"PRI_mfn"]",
+               mfn_x(frame));
         WARN();
         return false;
     }
