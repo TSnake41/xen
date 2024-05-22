@@ -37,8 +37,10 @@ typedef uint64_t daddr_t;
 
 struct arch_iommu_context
 {
-    spinlock_t pgtables_lock;
-    struct page_list_head pgtables;
+    struct {
+        struct page_list_head list;
+        spinlock_t lock;
+    } pgtables;
 
     /* Queue for freeing pages */
     struct page_list_head free_queue;
@@ -49,6 +51,7 @@ struct arch_iommu_context
             uint64_t pgd_maddr; /* io page directory machine address */
             domid_t *didmap; /* per-iommu DID */
             unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the context uses */
+            bool duplicated_rmrr; /* tag indicating that duplicated rmrr mappings are mapped */
         } vtd;
         /* AMD IOMMU */
         struct {
@@ -59,15 +62,10 @@ struct arch_iommu_context
 
 struct arch_iommu
 {
-    spinlock_t mapping_lock; /* io page table lock */
-    struct {
-        struct page_list_head list;
-        spinlock_t lock;
-    } pgtables;
-
+    spinlock_t lock; /* io page table lock */
     struct list_head identity_maps;
 
-    struct iommu_arena pt_arena;
+    struct iommu_arena pt_arena; /* allocator for non-default contexts */
 
     union {
         /* Intel VT-d */

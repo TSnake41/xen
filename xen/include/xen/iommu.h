@@ -52,7 +52,11 @@ static inline bool dfn_eq(dfn_t x, dfn_t y)
 #ifdef CONFIG_HAS_PASSTHROUGH
 extern bool iommu_enable, iommu_enabled;
 extern bool force_iommu, iommu_verbose;
+
 /* Boolean except for the specific purposes of drivers/passthrough/iommu.c. */
+#define IOMMU_quarantine_none         0 /* aka false */
+#define IOMMU_quarantine_basic        1 /* aka true */
+#define IOMMU_quarantine_scratch_page 2
 extern uint8_t iommu_quarantine;
 #else
 #define iommu_enabled false
@@ -182,6 +186,10 @@ int __must_check iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
                                    unsigned int *flags, u16 ctx_no);
 
 int __must_check iommu_iotlb_flush(struct domain *d, dfn_t dfn,
+                                   unsigned long page_count,
+                                   unsigned int flush_flags,
+                                   u16 ctx_no);
+int __must_check _iommu_iotlb_flush(struct domain *d, dfn_t dfn,
                                    unsigned long page_count,
                                    unsigned int flush_flags,
                                    u16 ctx_no);
@@ -452,6 +460,8 @@ int __must_check iommu_suspend(void);
 void iommu_resume(void);
 void iommu_crash_shutdown(void);
 int iommu_get_reserved_device_memory(iommu_grdm_t *func, void *ctxt);
+
+int __init iommu_quarantine_init(void);
 int iommu_quarantine_dev_init(device_t *dev);
 
 #ifdef CONFIG_HAS_PCI

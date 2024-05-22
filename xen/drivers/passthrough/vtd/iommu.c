@@ -1660,11 +1660,7 @@ int unapply_context_single(struct domain *domain, struct iommu_context *ctx,
 
 static void cf_check iommu_clear_root_pgtable(struct domain *d, struct iommu_context *ctx)
 {
-    //struct domain_iommu *hd = dom_iommu(d);
-
-    //spin_lock(&hd->lock);
     ctx->arch.vtd.pgd_maddr = 0;
-    //spin_unlock(&hd->lock);
 }
 
 static void cf_check iommu_domain_teardown(struct domain *d)
@@ -2518,6 +2514,8 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
     if ( !ctx->arch.vtd.iommu_bitmap )
         return -ENOMEM;
 
+    ctx->arch.vtd.duplicated_rmrr = false;
+
     if ( flags & IOMMU_CONTEXT_INIT_default )
     {
         ctx->arch.vtd.pgd_maddr = 0;
@@ -2565,6 +2563,182 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
     return arch_iommu_context_teardown(d, ctx, flags);
 }
 
+static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
+                                    struct iommu_context *ctx, struct acpi_rmrr_unit *rmrr)
+{
+    /* TODO: This code doesn't cleanup on failure */
+
+    int ret = 0, rc = 0;
+    unsigned int flush_flags = 0, flags;
+    u64 base_pfn = rmrr->base_address >> PAGE_SHIFT_4K;
+    u64 end_pfn = PAGE_ALIGN_4K(rmrr->end_address) >> PAGE_SHIFT_4K;
+    u64 pfn = base_pfn;
+
+    printk(VTDPREFIX
+            "Mapping d%dc%d device %p identity mapping [%08" PRIx64 ":%08" PRIx64 "]\n",
+            d->domain_id, ctx->id, pdev, rmrr->base_address, rmrr->end_address);
+
+    ASSERT(end_pfn >= base_pfn);
+
+    while (pfn < end_pfn)
+    {
+        mfn_t mfn;
+        ret = intel_iommu_lookup_page(d, _dfn(pfn), &mfn, &flags, ctx);
+
+        if ( ret == -ENOENT )
+        {
+            ret = intel_iommu_map_page(d, _dfn(pfn), _mfn(pfn),
+                                      IOMMUF_readable | IOMMUF_writable,
+                                      &flush_flags, ctx);
+
+            if ( ret < 0 )
+            {
+                printk(XENLOG_ERR VTDPREFIX
+                        "Unable to map RMRR page %"PRI_mfn" (%d)\n",
+                        mfn_x(mfn), ret);
+                break;
+            }
+        }
+        else if ( mfn_x(mfn) != pfn )
+        {
+            /* The dfn is already mapped to something else, can't continue. */
+            printk(XENLOG_ERR VTDPREFIX
+                   "Unable to map RMRR page %"PRI_mfn" (incompatible mapping)",
+                   mfn_x(mfn));
+
+            ret = -EINVAL;
+            break;
+        }
+        else if ( mfn_x(mfn) == pfn )
+        {
+            /*
+             * There is already a identity mapping in this context, we need to
+             * be extra-careful when dettaching the device to not break another
+             * existing RMRR.
+             */
+            printk(XENLOG_WARNING VTDPREFIX
+                   "Duplicated RMRR mapping for %"PRI_mfn"\n", mfn_x(mfn));
+
+            ctx->arch.vtd.duplicated_rmrr = true;
+        }
+
+        pfn++;
+    }
+
+    rc = iommu_flush_iotlb(d, ctx, _dfn(base_pfn), end_pfn - base_pfn + 1, flush_flags);
+
+    return ret ?: rc;
+}
+
+static int intel_iommu_map_dev_rmrr(struct domain *d, struct pci_dev *pdev,
+                                    struct iommu_context *ctx)
+{
+    struct acpi_rmrr_unit *rmrr;
+    u16 bdf;
+    int ret, i;
+
+    for_each_rmrr_device(rmrr, bdf, i)
+    {
+        if ( PCI_SBDF(rmrr->segment, bdf).sbdf == pdev->sbdf.sbdf )
+        {
+            ret = intel_iommu_map_identity(d, pdev, ctx, rmrr);
+
+            if ( ret < 0 )
+                return ret;
+        }
+    }
+
+    return 0;
+}
+
+static int intel_iommu_unmap_identity(struct domain *d, struct pci_dev *pdev,
+                                      struct iommu_context *ctx, struct acpi_rmrr_unit *rmrr)
+{
+    /* TODO: This code doesn't cleanup on failure */
+
+    int ret = 0, rc = 0;
+    unsigned int flush_flags = 0;
+    u64 base_pfn = rmrr->base_address >> PAGE_SHIFT_4K;
+    u64 end_pfn = PAGE_ALIGN_4K(rmrr->end_address) >> PAGE_SHIFT_4K;
+    u64 pfn = base_pfn;
+
+    printk(VTDPREFIX
+            "Unmapping d%dc%d device %p identity mapping [%08" PRIx64 ":%08" PRIx64 "]\n",
+            d->domain_id, ctx->id, pdev, rmrr->base_address, rmrr->end_address);
+
+    ASSERT(end_pfn >= base_pfn);
+
+    while (pfn < end_pfn)
+    {
+        ret = intel_iommu_unmap_page(d, _dfn(pfn), PAGE_ORDER_4K, &flush_flags, ctx);
+
+        if ( ret )
+            break;
+
+        pfn++;
+    }
+
+    rc = iommu_flush_iotlb(d, ctx, _dfn(base_pfn), end_pfn - base_pfn + 1, flush_flags);
+
+    return ret ?: rc;
+}
+
+/* Check if another overlapping rmrr exist for another device of the context */
+static bool intel_iommu_check_duplicate(struct domain *d, struct pci_dev *pdev,
+                                        struct iommu_context *ctx,
+                                        struct acpi_rmrr_unit *rmrr)
+{
+    struct acpi_rmrr_unit *other_rmrr;
+    u16 bdf;
+    int i;
+
+    for_each_rmrr_device(other_rmrr, bdf, i)
+    {
+        if (rmrr == other_rmrr)
+            continue;
+
+        /* Skip RMRR entries of the same device */
+        if ( PCI_SBDF(rmrr->segment, bdf).sbdf == pdev->sbdf.sbdf )
+            continue;
+
+        /* Check for overlap */
+        if ( rmrr->base_address >= other_rmrr->base_address
+            && rmrr->end_address <= other_rmrr->end_address )
+            return true;
+
+        if ( other_rmrr->base_address >= rmrr->base_address
+            && other_rmrr->end_address <= rmrr->end_address )
+            return true;
+    }
+
+    return false;
+}
+
+static int intel_iommu_unmap_dev_rmrr(struct domain *d, struct pci_dev *pdev,
+                                      struct iommu_context *ctx)
+{
+    struct acpi_rmrr_unit *rmrr;
+    u16 bdf;
+    int ret, i;
+
+    for_each_rmrr_device(rmrr, bdf, i)
+    {
+        if ( PCI_SBDF(rmrr->segment, bdf).sbdf == pdev->sbdf.sbdf )
+        {
+            if ( ctx->arch.vtd.duplicated_rmrr
+                && intel_iommu_check_duplicate(d, pdev, ctx, rmrr) )
+                continue;
+
+            ret = intel_iommu_unmap_identity(d, pdev, ctx, rmrr);
+
+            if ( ret < 0 )
+                return ret;
+        }
+    }
+
+    return 0;
+}
+
 static int intel_iommu_attach(struct domain *d, struct pci_dev *pdev,
                               struct iommu_context *ctx)
 {
@@ -2573,6 +2747,11 @@ static int intel_iommu_attach(struct domain *d, struct pci_dev *pdev,
 
     if (!pdev || !drhd)
         return -EINVAL;
+
+    ret = intel_iommu_map_dev_rmrr(d, pdev, ctx);
+
+    if ( ret )
+        return ret;
 
     ret = apply_context(d, ctx, pdev, pdev->devfn);
 
@@ -2598,6 +2777,8 @@ static int intel_iommu_dettach(struct domain *d, struct pci_dev *pdev,
     if ( ret )
         return ret;
 
+    WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
+
     check_cleanup_domid_map(d, prev_ctx, NULL, drhd->iommu);
 
     return ret;
@@ -2613,10 +2794,17 @@ static int intel_iommu_reattach(struct domain *d, struct pci_dev *pdev,
     if (!pdev || !drhd)
         return -EINVAL;
 
+    ret = intel_iommu_map_dev_rmrr(d, pdev, ctx);
+
+    if ( ret )
+        return ret;
+
     ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, pdev->devfn);
 
     if ( ret )
         return ret;
+
+    WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
 
     /* We are overwriting an entry, cleanup previous domid if needed. */
     check_cleanup_domid_map(d, prev_ctx, pdev, drhd->iommu);

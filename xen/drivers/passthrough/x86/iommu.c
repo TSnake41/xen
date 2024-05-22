@@ -195,8 +195,8 @@ void __hwdom_init arch_iommu_check_autotranslated_hwdom(struct domain *d)
 
 int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
-    INIT_PAGE_LIST_HEAD(&ctx->arch.pgtables);
-    spin_lock_init(&ctx->arch.pgtables_lock);
+    INIT_PAGE_LIST_HEAD(&ctx->arch.pgtables.list);
+    spin_lock_init(&ctx->arch.pgtables.lock);
 
     INIT_PAGE_LIST_HEAD(&ctx->arch.free_queue);
 
@@ -636,7 +636,7 @@ int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
         return 0;
 
     /* After this barrier, no new IOMMU mappings can be inserted. */
-    spin_barrier(&ctx->arch.pgtables_lock);
+    spin_barrier(&ctx->arch.pgtables.lock);
 
     /*
      * Pages will be moved to the free list below. So we want to
@@ -644,7 +644,7 @@ int iommu_free_pgtables(struct domain *d, struct iommu_context *ctx)
      */
     iommu_vcall(hd->platform_ops, clear_root_pgtable, d, ctx);
 
-    while ( (pg = page_list_remove_head(&ctx->arch.pgtables)) )
+    while ( (pg = page_list_remove_head(&ctx->arch.pgtables.list)) )
     {
         if (ctx->id == 0)
             free_domheap_page(pg);
@@ -708,7 +708,7 @@ struct page_info *iommu_alloc_pgtable(struct domain_iommu *hd,
 
     unmap_domain_page(p);
 
-    page_list_add(pg, &ctx->arch.pgtables);
+    page_list_add(pg, &ctx->arch.pgtables.list);
 
     return pg;
 }
@@ -751,9 +751,9 @@ void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg)
 {
     unsigned int cpu = smp_processor_id();
 
-    spin_lock(&ctx->arch.pgtables_lock);
-    page_list_del(pg, &ctx->arch.pgtables);
-    spin_unlock(&ctx->arch.pgtables_lock);
+    spin_lock(&ctx->arch.pgtables.lock);
+    page_list_del(pg, &ctx->arch.pgtables.list);
+    spin_unlock(&ctx->arch.pgtables.lock);
 
     if ( !ctx->id )
     {
@@ -762,10 +762,7 @@ void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg)
         tasklet_schedule(&per_cpu(free_pgt_tasklet, cpu));
     }
     else
-    {
         page_list_add_tail(pg, &ctx->arch.free_queue);
-    }
-
 }
 
 static int cf_check cpu_callback(

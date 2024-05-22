@@ -11,7 +11,6 @@
  * Written by Teddy Astie <teddy.astie@vates.tech>
  */
 
-#include "xen/compiler.h"
 #include <asm/bitops.h>
 #include <asm/page.h>
 #include <xen/atomic.h>
@@ -19,7 +18,7 @@
 #include <xen/config.h>
 #include <xen/mm-frame.h>
 #include <xen/mm.h>
-#include "arena.h"
+#include <asm/arena.h>
 
 /* Maximum of scan tries if the bit found not available */
 #define ARENA_TSL_MAX_TRIES 5
