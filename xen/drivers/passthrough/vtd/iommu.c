@@ -2748,10 +2748,13 @@ static int intel_iommu_attach(struct domain *d, struct pci_dev *pdev,
     if (!pdev || !drhd)
         return -EINVAL;
 
-    ret = intel_iommu_map_dev_rmrr(d, pdev, ctx);
+    if ( ctx->id )
+    {
+        ret = intel_iommu_map_dev_rmrr(d, pdev, ctx);
 
-    if ( ret )
-        return ret;
+        if ( ret )
+            return ret;
+    }
 
     ret = apply_context(d, ctx, pdev, pdev->devfn);
 
@@ -2777,7 +2780,8 @@ static int intel_iommu_dettach(struct domain *d, struct pci_dev *pdev,
     if ( ret )
         return ret;
 
-    WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
+    if ( prev_ctx->id )
+        WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
 
     check_cleanup_domid_map(d, prev_ctx, NULL, drhd->iommu);
 
@@ -2804,7 +2808,8 @@ static int intel_iommu_reattach(struct domain *d, struct pci_dev *pdev,
     if ( ret )
         return ret;
 
-    WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
+    if ( ctx->id )
+        WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
 
     /* We are overwriting an entry, cleanup previous domid if needed. */
     check_cleanup_domid_map(d, prev_ctx, pdev, drhd->iommu);
