@@ -2811,7 +2811,7 @@ static int intel_iommu_reattach(struct domain *d, struct pci_dev *pdev,
     if ( ret )
         return ret;
 
-    if ( ctx->id )
+    if ( prev_ctx->id )
         WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
 
     /* We are overwriting an entry, cleanup previous domid if needed. */
