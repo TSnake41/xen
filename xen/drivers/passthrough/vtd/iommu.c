@@ -1878,7 +1878,8 @@ static int cf_check intel_iommu_lookup_page(
      * domain and iommu_passthrough is set then pass back the dfn.
      */
     if ( iommu_use_hap_pt(d) ||
-         (iommu_hwdom_passthrough && is_hardware_domain(d)) )
+         (iommu_hwdom_passthrough && is_hardware_domain(d))
+         && !ctx->id )
         return -EOPNOTSUPP;
 
 
