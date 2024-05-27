@@ -2583,7 +2583,7 @@ static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
 
     while (pfn < end_pfn)
     {
-        mfn_t mfn;
+        mfn_t mfn = INVALID_MFN;
         ret = intel_iommu_lookup_page(d, _dfn(pfn), &mfn, &flags, ctx);
 
         if ( ret == -ENOENT )
@@ -2599,6 +2599,13 @@ static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
                         pfn, ret);
                 break;
             }
+        }
+        else if ( ret )
+        {
+            printk(XENLOG_ERR VTDPREFIX
+                    " Unable to lookup page %"PRI_pfn" (%d)\n",
+                    pfn, ret);
+            break;
         }
         else if ( mfn_x(mfn) != pfn )
         {
