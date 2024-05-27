@@ -2576,7 +2576,7 @@ static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
 
     printk(XENLOG_INFO VTDPREFIX
             " Mapping d%dc%d device %pp identity mapping [%08" PRIx64 ":%08" PRIx64 "]\n",
-            d->domain_id, ctx->id, pdev, rmrr->base_address, rmrr->end_address);
+            d->domain_id, ctx->id, &pdev->sbdf, rmrr->base_address, rmrr->end_address);
 
     ASSERT(end_pfn >= base_pfn);
 
@@ -2594,8 +2594,8 @@ static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
             if ( ret < 0 )
             {
                 printk(XENLOG_ERR VTDPREFIX
-                        " Unable to map RMRR page %"PRI_mfn" (%d)\n",
-                        mfn_x(mfn), ret);
+                        " Unable to map RMRR page %"PRI_pfn" (%d)\n",
+                        pfn, ret);
                 break;
             }
         }
@@ -2603,8 +2603,8 @@ static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
         {
             /* The dfn is already mapped to something else, can't continue. */
             printk(XENLOG_ERR VTDPREFIX
-                   " Unable to map RMRR page %"PRI_mfn" (incompatible mapping)",
-                   mfn_x(mfn));
+                   " Unable to map RMRR page %"PRI_mfn"!=%"PRI_pfn" (incompatible mapping)\n",
+                   mfn_x(mfn), pfn);
 
             ret = -EINVAL;
             break;
@@ -2617,7 +2617,7 @@ static int intel_iommu_map_identity(struct domain *d, struct pci_dev *pdev,
              * existing RMRR.
              */
             printk(XENLOG_WARNING VTDPREFIX
-                   "Duplicated RMRR mapping %"PRI_mfn"\n", mfn_x(mfn));
+                   "Duplicated RMRR mapping %"PRI_pfn"\n", pfn);
 
             ctx->arch.vtd.duplicated_rmrr = true;
         }
@@ -2664,7 +2664,7 @@ static int intel_iommu_unmap_identity(struct domain *d, struct pci_dev *pdev,
 
     printk(VTDPREFIX
             " Unmapping d%dc%d device %pp identity mapping [%08" PRIx64 ":%08" PRIx64 "]\n",
-            d->domain_id, ctx->id, pdev, rmrr->base_address, rmrr->end_address);
+            d->domain_id, ctx->id, &pdev->sbdf, rmrr->base_address, rmrr->end_address);
 
     ASSERT(end_pfn >= base_pfn);
 
