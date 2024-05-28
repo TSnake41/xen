@@ -50,7 +50,12 @@ int8_t __hwdom_initdata iommu_hwdom_reserved = -1;
 bool __read_mostly iommu_hap_pt_share = true;
 #endif
 
-uint16_t __read_mostly iommu_hwdom_nb_ctx = 8;
+uint16_t __read_mostly iommu_hwdom_nb_ctx;
+bool __read_mostly iommu_hwdom_nb_ctx_forced = false;
+
+#ifdef CONFIG_X86
+unsigned int __read_mostly iommu_hwdom_arena_order = CONFIG_X86_ARENA_ORDER;
+#endif
 
 bool __read_mostly iommu_debug;
 
@@ -147,7 +152,7 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
     int rc = 0;
 
     do {
-        long long nb_ctx;
+        long long ll_val;
         int val;
 
         ss = strchr(s, ',');
@@ -164,12 +169,19 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
             iommu_hwdom_reserved = val;
         else if ( !cmdline_strcmp(s, "none") )
             iommu_hwdom_none = true;
-        else if ( !parse_signed_integer("nb-ctx", s, ss, &nb_ctx) )
+        else if ( !parse_signed_integer("nb-ctx", s, ss, &ll_val) )
         {
-            if (nb_ctx > 0 && nb_ctx < UINT16_MAX)
-                iommu_hwdom_nb_ctx = nb_ctx;
+            if (ll_val > 0 && ll_val < UINT16_MAX)
+                iommu_hwdom_nb_ctx = ll_val;
             else
-                printk(XENLOG_WARNING "'nb-ctx=%lld' value out of range!\n", nb_ctx);
+                printk(XENLOG_WARNING "'nb-ctx=%lld' value out of range!\n", ll_val);
+        }
+        else if ( !parse_signed_integer("arena-order", s, ss, &ll_val) )
+        {
+            if (ll_val > 0)
+                iommu_hwdom_arena_order = ll_val;
+            else
+                printk(XENLOG_WARNING "'arena-order=%lld' value out of range!\n", ll_val);
         }
         else
             rc = -EINVAL;
@@ -190,6 +202,22 @@ static void __hwdom_init check_hwdom_reqs(struct domain *d)
     iommu_hwdom_strict = true;
 
     arch_iommu_check_autotranslated_hwdom(d);
+}
+
+uint16_t __hwdom_init iommu_hwdom_get_count(void)
+{
+    if (iommu_hwdom_nb_ctx_forced)
+        return iommu_hwdom_nb_ctx;
+
+    /* TODO: Find a way of counting devices ? */
+    return 256;
+
+    /*
+    if (iommu_hwdom_nb_ctx != UINT16_MAX)
+        iommu_hwdom_nb_ctx++;
+    else
+        printk(XENLOG_WARNING " IOMMU: Can't prepare more contexts: too much devices");
+    */
 }
 
 int iommu_domain_init(struct domain *d, unsigned int opts)

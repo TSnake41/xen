@@ -228,7 +228,7 @@ int arch_iommu_domain_init(struct domain *d)
     struct domain_iommu *hd = dom_iommu(d);
 
     INIT_LIST_HEAD(&hd->arch.identity_maps);
-    iommu_arena_initialize(&hd->arch.pt_arena, NULL, 0);
+    iommu_arena_initialize(&hd->arch.pt_arena, NULL, iommu_hwdom_arena_order, 0);
 
     return 0;
 }

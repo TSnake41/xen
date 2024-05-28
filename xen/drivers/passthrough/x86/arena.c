@@ -23,22 +23,25 @@
 /* Maximum of scan tries if the bit found not available */
 #define ARENA_TSL_MAX_TRIES 5
 
-int iommu_arena_initialize(struct iommu_arena *arena, struct domain *d, unsigned int memflags)
+int iommu_arena_initialize(struct iommu_arena *arena, struct domain *d,
+                           unsigned int order, unsigned int memflags)
 {
     struct page_info *page;
 
     /* TODO: Maybe allocate differently ? */
-    page = alloc_domheap_pages(d, IOMMU_ARENA_PAGE_ORDER, memflags);
+    page = alloc_domheap_pages(d, order, memflags);
 
     if ( !page )
         return -ENOMEM;
 
     arena->region_start = page_to_mfn(page);
+    arena->order = order;
+
     _atomic_set(&arena->used_pages, 0);
-    bitmap_zero(arena->map, IOMMU_ARENA_PAGE_COUNT);
+    bitmap_zero(arena->map, iommu_arena_size(arena));
 
     printk(XENLOG_DEBUG "IOMMU: Allocated arena (%llu pages, start=%"PRI_mfn")\n",
-           IOMMU_ARENA_PAGE_COUNT, mfn_x(arena->region_start));
+           iommu_arena_size(arena), mfn_x(arena->region_start));
     return 0;
 }
 
@@ -50,11 +53,11 @@ int iommu_arena_teardown(struct iommu_arena *arena, bool check)
     if ( check && (atomic_read(&arena->used_pages) > 0) )
         return -EBUSY;
 
-    free_domheap_pages(mfn_to_page(arena->region_start), IOMMU_ARENA_PAGE_ORDER);
+    free_domheap_pages(mfn_to_page(arena->region_start), arena->order);
 
     arena->region_start = _mfn(0);
     _atomic_set(&arena->used_pages, 0);
-    bitmap_fill(arena->map, IOMMU_ARENA_PAGE_COUNT);
+    bitmap_fill(arena->map, iommu_arena_size(arena));
 
     return 0;
 }
@@ -66,15 +69,15 @@ struct page_info *iommu_arena_allocate_page(struct iommu_arena *arena)
 
     BUG_ON(mfn_x(arena->region_start) == 0);
 
-    if ( atomic_read(&arena->used_pages) == IOMMU_ARENA_PAGE_COUNT )
+    if ( atomic_read(&arena->used_pages) == iommu_arena_size(arena) )
         /* All pages used */
         return NULL;
 
     do
     {
-        index = find_first_zero_bit(arena->map, IOMMU_ARENA_PAGE_COUNT);
+        index = find_first_zero_bit(arena->map, iommu_arena_size(arena));
 
-        if ( index >= IOMMU_ARENA_PAGE_COUNT )
+        if ( index >= iommu_arena_size(arena) )
             /* No more free pages */
             return NULL;
 
@@ -116,7 +119,7 @@ bool iommu_arena_free_page(struct iommu_arena *arena, struct page_info *page)
 
     /* Check if page belongs to our arena */
     if ( (mfn_x(frame) < mfn_x(arena->region_start))
-        || (mfn_x(frame) >= (mfn_x(arena->region_start) + IOMMU_ARENA_PAGE_COUNT)) )
+        || (mfn_x(frame) >= (mfn_x(arena->region_start) + iommu_arena_size(arena))) )
     {
         printk(XENLOG_WARNING
                "IOMMU: Trying to free outside arena region [mfn=%"PRI_mfn"]",
@@ -128,7 +131,7 @@ bool iommu_arena_free_page(struct iommu_arena *arena, struct page_info *page)
     index = mfn_x(frame) - mfn_x(arena->region_start);
 
     /* Sanity check in case of underflow. */
-    ASSERT(index < IOMMU_ARENA_PAGE_COUNT);
+    ASSERT(index < iommu_arena_size(arena));
 
     if ( !test_and_clear_bit(index, arena->map) )
     {

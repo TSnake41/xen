@@ -113,6 +113,10 @@ extern bool iommu_hwdom_strict, iommu_hwdom_passthrough, iommu_hwdom_inclusive;
 extern int8_t iommu_hwdom_reserved;
 extern uint16_t iommu_hwdom_nb_ctx;
 
+#ifdef CONFIG_X86
+extern unsigned int iommu_hwdom_arena_order;
+#endif
+
 extern unsigned int iommu_dev_iotlb_timeout;
 
 int iommu_setup(void);

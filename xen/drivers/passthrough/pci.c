@@ -1162,12 +1162,6 @@ static void __hwdom_init setup_one_hwdom_device(const struct setup_hwdom *ctxt,
     if ( err )
         printk(XENLOG_ERR "setup of vPCI for d%d failed: %d\n",
                ctxt->d->domain_id, err);
-
-    /* Add one context per device */
-    if (iommu_hwdom_nb_ctx != UINT16_MAX)
-        iommu_hwdom_nb_ctx++;
-    else
-        printk(XENLOG_WARNING " IOMMU: Can't prepare more contexts: too much devices");
 }
 
 static int __hwdom_init cf_check _setup_hwdom_pci_devices(
