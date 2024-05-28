@@ -169,7 +169,7 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
             if (nb_ctx > 0 && nb_ctx < UINT16_MAX)
                 iommu_hwdom_nb_ctx = nb_ctx;
             else
-                printk(XENLOG_INFO "'nb-ctx=%lld' value out of range!\n", nb_ctx);
+                printk(XENLOG_WARNING "'nb-ctx=%lld' value out of range!\n", nb_ctx);
         }
         else
             rc = -EINVAL;
