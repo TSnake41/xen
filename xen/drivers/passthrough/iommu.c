@@ -204,7 +204,7 @@ static void __hwdom_init check_hwdom_reqs(struct domain *d)
     arch_iommu_check_autotranslated_hwdom(d);
 }
 
-uint16_t __hwdom_init iommu_hwdom_get_count(void)
+uint16_t __hwdom_init iommu_hwdom_ctx_count(void)
 {
     if (iommu_hwdom_nb_ctx_forced)
         return iommu_hwdom_nb_ctx;
@@ -263,6 +263,8 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
         hd->need_sync = !iommu_use_hap_pt(d);
 
     ASSERT(!(hd->need_sync && hd->hap_pt_share));
+
+    iommu_hwdom_nb_ctx = iommu_hwdom_ctx_count();
 
     if ( is_hardware_domain(d) )
     {
