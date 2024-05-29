@@ -18,6 +18,8 @@
 #include <xen/config.h>
 #include <xen/mm-frame.h>
 #include <xen/mm.h>
+#include <xen/xmalloc.h>
+
 #include <asm/arena.h>
 
 /* Maximum of scan tries if the bit found not available */
@@ -34,8 +36,9 @@ int iommu_arena_initialize(struct iommu_arena *arena, struct domain *d,
     if ( !page )
         return -ENOMEM;
 
-    arena->region_start = page_to_mfn(page);
+    arena->map = xzalloc_array(unsigned long, BITS_TO_LONGS(1LLU << order));
     arena->order = order;
+    arena->region_start = page_to_mfn(page);
 
     _atomic_set(&arena->used_pages, 0);
     bitmap_zero(arena->map, iommu_arena_size(arena));
@@ -57,7 +60,8 @@ int iommu_arena_teardown(struct iommu_arena *arena, bool check)
 
     arena->region_start = _mfn(0);
     _atomic_set(&arena->used_pages, 0);
-    bitmap_fill(arena->map, iommu_arena_size(arena));
+    xfree(arena->map);
+    arena->map = NULL;
 
     return 0;
 }
