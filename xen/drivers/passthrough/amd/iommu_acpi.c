@@ -1168,6 +1168,7 @@ static int __init cf_check detect_iommu_acpi(struct acpi_table_header *table)
 {
     const struct acpi_ivrs_header *ivrs_block;
     unsigned long length = sizeof(struct acpi_table_ivrs);
+    unsigned int index = 0;
 
     while ( table->length > (length + sizeof(*ivrs_block)) )
     {
@@ -1175,8 +1176,9 @@ static int __init cf_check detect_iommu_acpi(struct acpi_table_header *table)
         if ( table->length < (length + ivrs_block->length) )
             return -ENODEV;
         if ( ivrs_block->type == ivhd_type &&
-             amd_iommu_detect_one_acpi(to_ivhd_block(ivrs_block)) != 0 )
+             amd_iommu_detect_one_acpi(to_ivhd_block(ivrs_block), index) != 0 )
             return -ENODEV;
+        index++;
         length += ivrs_block->length;
     }
     return 0;

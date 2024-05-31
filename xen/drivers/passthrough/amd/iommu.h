@@ -77,6 +77,8 @@ struct amd_iommu {
     struct list_head list;
     spinlock_t lock; /* protect iommu */
 
+    unsigned int index;
+
     u16 seg;
     u16 bdf;
     struct msi_desc msi;
@@ -177,7 +179,8 @@ struct acpi_ivrs_hardware;
 /* amd-iommu-detect functions */
 int amd_iommu_get_ivrs_dev_entries(void);
 int amd_iommu_get_supported_ivhd_type(void);
-int amd_iommu_detect_one_acpi(const struct acpi_ivrs_hardware *ivhd_block);
+int amd_iommu_detect_one_acpi(const struct acpi_ivrs_hardware *ivhd_block,
+                              unsigned int index);
 int amd_iommu_detect_acpi(void);
 void get_iommu_features(struct amd_iommu *iommu);
 
@@ -193,12 +196,13 @@ void amd_iommu_quarantine_teardown(struct pci_dev *pdev);
 
 /* mapping functions */
 int __must_check cf_check amd_iommu_map_page(
-    struct domain *d, dfn_t dfn, mfn_t mfn, unsigned int flags,
-    unsigned int *flush_flags);
+    struct domain *d, dfn_t dfn, mfn_t mfn,
+    unsigned int flags, unsigned int *flush_flags,
+    struct iommu_context *ctx);
 int __must_check cf_check amd_iommu_unmap_page(
     struct domain *d, dfn_t dfn, unsigned int order,
-    unsigned int *flush_flags);
-int __must_check amd_iommu_alloc_root(struct domain *d);
+    unsigned int *flush_flags,
+    struct iommu_context *ctx);
 int amd_iommu_reserve_domain_unity_map(struct domain *d,
                                        const struct ivrs_unity_map *map,
                                        unsigned int flag);
@@ -207,8 +211,8 @@ int amd_iommu_reserve_domain_unity_unmap(struct domain *d,
 int cf_check amd_iommu_get_reserved_device_memory(
     iommu_grdm_t *func, void *ctxt);
 int __must_check cf_check amd_iommu_flush_iotlb_pages(
-    struct domain *d, dfn_t dfn, unsigned long page_count,
-    unsigned int flush_flags);
+    struct domain *d, struct iommu_context *ctx, dfn_t dfn,
+    unsigned long page_count, unsigned int flush_flags);
 void amd_iommu_print_entries(const struct amd_iommu *iommu, unsigned int dev_id,
                              dfn_t dfn);
 
@@ -229,9 +233,9 @@ void iommu_dte_add_device_entry(struct amd_iommu_dte *dte,
                                 const struct ivrs_mappings *ivrs_dev);
 
 /* send cmd to iommu */
-void amd_iommu_flush_all_pages(struct domain *d);
-void amd_iommu_flush_pages(struct domain *d, unsigned long dfn,
-                           unsigned int order);
+void amd_iommu_flush_all_pages(struct domain *d, struct iommu_context *ctx);
+void amd_iommu_flush_pages(struct domain *d, struct iommu_context *ctx,
+                           unsigned long dfn, unsigned int order);
 void amd_iommu_flush_iotlb(u8 devfn, const struct pci_dev *pdev,
                            daddr_t daddr, unsigned int order);
 void amd_iommu_flush_device(struct amd_iommu *iommu, uint16_t bdf,

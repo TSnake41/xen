@@ -133,7 +133,7 @@ void __init get_iommu_features(struct amd_iommu *iommu)
 }
 
 int __init amd_iommu_detect_one_acpi(
-    const struct acpi_ivrs_hardware *ivhd_block)
+    const struct acpi_ivrs_hardware *ivhd_block, unsigned int index)
 {
     struct amd_iommu *iommu;
     u8 bus, dev, func;
@@ -166,6 +166,8 @@ int __init amd_iommu_detect_one_acpi(
     iommu->bdf = ivhd_block->header.device_id;
     iommu->cap_offset = ivhd_block->capability_offset;
     iommu->mmio_base_phys = ivhd_block->base_address;
+
+    iommu->index = index;
 
     if ( ivhd_type != ACPI_IVRS_TYPE_HARDWARE )
         iommu->features.raw = ivhd_block->efr_image;

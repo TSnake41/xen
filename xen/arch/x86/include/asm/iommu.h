@@ -56,6 +56,8 @@ struct arch_iommu_context
         /* AMD IOMMU */
         struct {
             struct page_info *root_table;
+            domid_t *didmap; /* per-iommu DID */
+            unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the context uses */
         } amd;
     };
 };

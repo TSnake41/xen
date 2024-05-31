@@ -20,6 +20,9 @@
 #include <xen/acpi.h>
 #include <xen/delay.h>
 #include <xen/keyhandler.h>
+#include <xen/iommu.h>
+#include <xen/types.h>
+#include <asm/iommu.h>
 
 #include "iommu.h"
 
@@ -604,7 +607,7 @@ static void iommu_check_event_log(struct amd_iommu *iommu)
                    sizeof(event_entry_t), parse_event_log_entry);
 
     spin_lock_irqsave(&iommu->lock, flags);
-    
+
     /* Check event overflow. */
     entry = readl(iommu->mmio_base + IOMMU_STATUS_MMIO_OFFSET);
     if ( entry & IOMMU_STATUS_EVENT_LOG_OVERFLOW )
@@ -660,7 +663,7 @@ static void iommu_check_ppr_log(struct amd_iommu *iommu)
 
     iommu_read_log(iommu, &iommu->ppr_log,
                    sizeof(ppr_entry_t), parse_ppr_log_entry);
-    
+
     spin_lock_irqsave(&iommu->lock, flags);
 
     /* Check event overflow. */
@@ -1536,16 +1539,28 @@ int __init amd_iommu_init_late(void)
 static void invalidate_all_domain_pages(void)
 {
     struct domain *d;
+    struct iommu_context *ctx;
+    unsigned int i;
 
     for_each_domain( d )
         if ( is_iommu_enabled(d) )
-            amd_iommu_flush_all_pages(d);
+        {
+            amd_iommu_flush_all_pages(d, iommu_default_context(d));
+
+            for (i = 0; i < dom_iommu(d)->other_contexts.count; i++)
+            {
+                ctx = iommu_get_context(d, i);
+
+                if ( ctx )
+                    amd_iommu_flush_all_pages(d, ctx);
+            }
+        }
 }
 
 static int cf_check _invalidate_all_devices(
     u16 seg, struct ivrs_mappings *ivrs_mappings)
 {
-    unsigned int bdf; 
+    unsigned int bdf;
     u16 req_id;
     struct amd_iommu *iommu;
 
@@ -1595,7 +1610,7 @@ void cf_check amd_iommu_resume(void)
     for_each_amd_iommu ( iommu )
     {
        /*
-        * To make sure that iommus have not been touched 
+        * To make sure that iommus have not been touched
         * before re-enablement
         */
         disable_iommu(iommu);
@@ -1610,4 +1625,69 @@ void cf_check amd_iommu_resume(void)
         invalidate_all_devices();
         invalidate_all_domain_pages();
     }
+}
+
+
+/* iommu->seg is probably incorrect, there is no iommu->index in AMD driver though */
+int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    struct domain_iommu *hd = dom_iommu(d);
+    struct amd_iommu *iommu;
+
+    ctx->arch.amd.didmap = xzalloc_array(u16, nr_amd_iommus);
+
+    if ( !ctx->arch.amd.didmap )
+        return -ENOMEM;
+
+    ctx->arch.amd.iommu_bitmap = xzalloc_array(unsigned long,
+                                               BITS_TO_LONGS(nr_amd_iommus));
+
+    if ( flags & IOMMU_CONTEXT_INIT_default )
+    {
+        ctx->arch.amd.root_table = NULL;
+
+        /* Populate context DID map using domain id. */
+        for_each_amd_iommu(iommu)
+        {
+            ctx->arch.amd.didmap[iommu->index] = d->domain_id;
+        }
+    }
+    else
+    {
+        /* Populate context DID map using pseudo DIDs */
+        for_each_amd_iommu(iommu)
+        {
+            /*
+             * Actually, AMD uses 16-bits DID without limits, so, all DID we
+             * allocate is going to be uniform between IOMMUs, until we allocate
+             * DIDs on demand in the future.
+             */
+            ctx->arch.amd.didmap[iommu->index] = iommu_alloc_domid(iommu->domid_map);
+        }
+
+        /* Create initial context page */
+        ctx->arch.amd.root_table = iommu_alloc_pgtable(hd, ctx, 0);
+    }
+
+    return arch_iommu_context_init(d, ctx, flags);
+}
+
+int amd_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
+{
+    struct amd_iommu *iommu;
+    pcidevs_lock();
+
+    if (ctx->arch.amd.didmap)
+    {
+        for_each_amd_iommu(iommu)
+        {
+            iommu_free_domid(ctx->arch.amd.didmap[iommu->index],
+                iommu->domid_map);
+        }
+
+        xfree(ctx->arch.amd.didmap);
+    }
+
+    pcidevs_unlock();
+    return arch_iommu_context_teardown(d, ctx, flags);
 }
