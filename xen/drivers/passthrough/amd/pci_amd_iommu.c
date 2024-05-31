@@ -489,8 +489,8 @@ static int cf_check amd_iommu_attach(struct domain *d, struct pci_dev *pdev,
                                      struct iommu_context *ctx)
 {
     struct amd_iommu *iommu;
-    //u16 bdf;
-    //struct ivrs_mappings *ivrs_mappings;
+    u16 bdf;
+    struct ivrs_mappings *ivrs_mappings;
     int ret;
 
     if ( !d )
@@ -517,7 +517,6 @@ static int cf_check amd_iommu_attach(struct domain *d, struct pci_dev *pdev,
         return -ENODEV;
     }
 
-    #if 0
     ivrs_mappings = get_ivrs_mappings(pdev->seg);
     bdf = PCI_BDF(pdev->bus, pdev->devfn);
     if ( !ivrs_mappings ||
@@ -553,13 +552,14 @@ static int cf_check amd_iommu_attach(struct domain *d, struct pci_dev *pdev,
         amd_iommu_flush_device(iommu, bdf, DOMID_INVALID);
     }
 
+    /*
     if ( amd_iommu_reserve_domain_unity_map(
              pdev->domain,
              ivrs_mappings[ivrs_mappings[bdf].dte_requestor_id].unity_map,
              0) )
         AMD_IOMMU_WARN("%pd: unity mapping failed for %pp\n",
                        pdev->domain, &PCI_SBDF(pdev->seg, bdf));
-    #endif
+    */
 
     ret = amd_iommu_setup_context_device(d, ctx, iommu, pdev->devfn, pdev);
 
@@ -589,11 +589,13 @@ static int cf_check amd_iommu_remove_device(struct domain *d, struct pci_dev *pd
     ivrs_mappings = get_ivrs_mappings(pdev->seg);
     bdf = pdev->sbdf.bdf;
 
+    #if 0
     if ( amd_iommu_reserve_domain_unity_unmap(
              pdev->domain,
              ivrs_mappings[ivrs_mappings[bdf].dte_requestor_id].unity_map) )
         AMD_IOMMU_WARN("%pd: unity unmapping failed for %pp\n",
                        pdev->domain, &PCI_SBDF(pdev->seg, bdf));
+    #endif
 
     //amd_iommu_quarantine_teardown(pdev);
 
