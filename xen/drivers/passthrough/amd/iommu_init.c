@@ -26,7 +26,7 @@
 
 #include "iommu.h"
 
-static int __initdata nr_amd_iommus;
+static int __read_mostly nr_amd_iommus;
 static bool __initdata pci_init;
 
 static struct tasklet amd_iommu_irq_tasklet;
