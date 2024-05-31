@@ -1633,6 +1633,12 @@ int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flag
 {
     struct domain_iommu *hd = dom_iommu(d);
     struct amd_iommu *iommu;
+    int ret;
+
+    ret = arch_iommu_context_init(d, ctx, flags);
+
+    if ( ret )
+        return ret;
 
     ctx->arch.amd.didmap = xzalloc_array(u16, nr_amd_iommus);
 
@@ -1642,15 +1648,29 @@ int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flag
     ctx->arch.amd.iommu_bitmap = xzalloc_array(unsigned long,
                                                BITS_TO_LONGS(nr_amd_iommus));
 
+    if ( !ctx->arch.amd.iommu_bitmap )
+    {
+        xfree(ctx->arch.amd.didmap);
+        return -ENOMEM;
+    }
+
+
+    /* Create initial context page */
+    /* TODO: What about HAP ? */
+    ctx->arch.amd.root_table = iommu_alloc_pgtable(hd, ctx, 0);
+
+    if ( !ctx->arch.amd.root_table )
+    {
+        xfree(ctx->arch.amd.didmap);
+        xfree(ctx->arch.amd.iommu_bitmap);
+        return -ENOMEM;
+    }
+
     if ( flags & IOMMU_CONTEXT_INIT_default )
     {
         /* Populate context DID map using domain id. */
         for_each_amd_iommu(iommu)
-        {
             ctx->arch.amd.didmap[iommu->index] = d->domain_id;
-        }
-
-        ctx->arch.amd.root_table = iommu_alloc_pgtable(hd, ctx, 0);
     }
     else
     {
@@ -1665,11 +1685,9 @@ int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flag
             ctx->arch.amd.didmap[iommu->index] = iommu_alloc_domid(iommu->domid_map);
         }
 
-        /* Create initial context page */
-        ctx->arch.amd.root_table = iommu_alloc_pgtable(hd, ctx, 0);
     }
 
-    return arch_iommu_context_init(d, ctx, flags);
+    return 0;
 }
 
 int amd_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
