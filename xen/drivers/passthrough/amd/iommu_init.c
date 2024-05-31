@@ -1644,13 +1644,13 @@ int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flag
 
     if ( flags & IOMMU_CONTEXT_INIT_default )
     {
-        ctx->arch.amd.root_table = NULL;
-
         /* Populate context DID map using domain id. */
         for_each_amd_iommu(iommu)
         {
             ctx->arch.amd.didmap[iommu->index] = d->domain_id;
         }
+
+        ctx->arch.amd.root_table = iommu_alloc_pgtable(hd, ctx, 0);
     }
     else
     {
