@@ -1450,6 +1450,52 @@ int __init amd_iommu_prepare(bool xt)
     return rc ?: xt && !has_xt ? -ENODEV : 0;
 }
 
+static void arch_iommu_dump_domain_contexts(struct domain *d)
+{
+    unsigned int i, iommu_no;
+    struct pci_dev *pdev;
+    struct iommu_context *ctx;
+    struct domain_iommu *hd = dom_iommu(d);
+
+    printk("d%hu contexts\n", d->domain_id);
+
+    spin_lock(&hd->lock);
+
+    for (i = 0; i < (1 + dom_iommu(d)->other_contexts.count); ++i)
+    {
+        if (iommu_check_context(d, i))
+        {
+            ctx = iommu_get_context(d, i);
+            printk(" Context %d (%"PRIx64")\n", i, page_to_mfn(ctx->arch.amd.root_table).mfn);
+
+            for (iommu_no = 0; iommu_no < nr_amd_iommus; iommu_no++)
+                printk("  IOMMU %hu (used=%u; did=%hu)\n", iommu_no,
+                       test_bit(iommu_no, ctx->arch.amd.iommu_bitmap),
+                       ctx->arch.amd.didmap[iommu_no]);
+
+            list_for_each_entry(pdev, &ctx->devices, context_list)
+            {
+                printk("  - %pp\n", &pdev->sbdf);
+            }
+        }
+    }
+
+    spin_unlock(&hd->lock);
+}
+
+static void arch_iommu_dump_contexts(unsigned char key)
+{
+    struct domain *d;
+
+    for_each_domain(d) {
+        struct domain_iommu *hd = dom_iommu(d);
+        printk("d%hu arena page usage: %d\n", d->domain_id,
+               atomic_read(&hd->arch.pt_arena.used_pages));
+
+        arch_iommu_dump_domain_contexts(d);
+    }
+}
+
 int __init amd_iommu_init(bool xt)
 {
     struct amd_iommu *iommu;
@@ -1489,6 +1535,8 @@ int __init amd_iommu_init(bool xt)
     if ( iommu_intremap != iommu_intremap_off )
         register_keyhandler('V', &amd_iommu_dump_intremap_tables,
                             "dump IOMMU intremap tables", 0);
+
+    register_keyhandler('X', arch_iommu_dump_contexts, "dump iommu contexts", 1);
 
     return 0;
 
@@ -1654,7 +1702,6 @@ int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flag
         return -ENOMEM;
     }
 
-
     /* Create initial context page */
     /* TODO: What about HAP ? */
     ctx->arch.amd.root_table = iommu_alloc_pgtable(hd, ctx, 0);
@@ -1677,6 +1724,7 @@ int amd_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flag
         /* Populate context DID map using pseudo DIDs */
         for_each_amd_iommu(iommu)
         {
+            printk("iommu->index=%d ; nr_amd_iommus=%d", iommu->index, nr_amd_iommus);
             /*
              * Actually, AMD uses 16-bits DID without limits, so, all DID we
              * allocate is going to be uniform between IOMMUs, until we allocate
