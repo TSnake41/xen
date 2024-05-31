@@ -416,13 +416,20 @@ static void amd_iommu_disable_domain_device(const struct domain *domain,
         spin_unlock_irqrestore(&iommu->lock, flags);
 }
 
-static int cf_check reassign_device(struct domain *d, struct pci_dev *pdev,
-                                    struct iommu_context *prev_ctx,
-                                    struct iommu_context *ctx)
+static int cf_check amd_iommu_reattach(struct domain *d, struct pci_dev *pdev,
+                                       struct iommu_context *prev_ctx,
+                                       struct iommu_context *ctx)
 {
     struct amd_iommu *iommu;
     struct domain *prev_dom;
     int rc;
+
+    for_each_amd_iommu(iommu)
+    {
+        if (iommu->bdf == pdev->sbdf.bdf && iommu->seg == pdev->seg)
+            /* Do not attempt to passthrough AMD IOMMU */
+            return 0;
+    }
 
     iommu = find_iommu_for_device(pdev->seg, pdev->sbdf.bdf);
     if ( !iommu )
@@ -686,7 +693,7 @@ static const struct iommu_ops __initconst_cf_clobber _iommu_ops = {
     .context_init = amd_iommu_context_init,
     .context_teardown = amd_iommu_context_teardown,
     .attach  = amd_iommu_attach,
-    .reattach = reassign_device,
+    .reattach = amd_iommu_reattach,
     .dettach = amd_iommu_remove_device,
     .teardown = amd_iommu_domain_destroy,
     .clear_root_pgtable = amd_iommu_clear_root_pgtable,
