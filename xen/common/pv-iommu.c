@@ -179,9 +179,9 @@ static long map_pages_op(struct pv_iommu_op *op, struct domain *d)
 
 static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
 {
-    mfn_t mfn;
+    //mfn_t mfn;
     int ret = 0, flush_ret;
-    unsigned int flags;
+    //unsigned int flags;
     unsigned int flush_flags = 0;
     size_t i = 0;
 
@@ -200,10 +200,10 @@ static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
         dfn_t dfn = _dfn(op->unmap_pages.dfn + i);
 
         /* Check if there is a valid mapping for this domain */
-        if ( iommu_lookup_page(d, dfn, &mfn, &flags, op->ctx_no) ) {
-            ret = -ENOENT;
-            break;
-        }
+        //if ( iommu_lookup_page(d, dfn, &mfn, &flags, op->ctx_no) ) {
+        //    ret = -ENOENT;
+        //    break;
+        //}
 
         ret = iommu_unmap(d, dfn, 1, 0, &flush_flags, op->ctx_no);
 
@@ -211,7 +211,7 @@ static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
             break;
 
         /* Decrement reference counter */
-        put_page(mfn_to_page(mfn));
+        //put_page(mfn_to_page(mfn));
     }
 
     op->unmap_pages.unmapped = i;
@@ -221,7 +221,7 @@ static long unmap_pages_op(struct pv_iommu_op *op, struct domain *d)
                                   op->ctx_no);
 
     if ( flush_ret )
-        printk("Flush operation failed (%d)\n", flush_ret);
+        printk(PVIOMMU_PREFIX "Flush operation failed (%d)\n", flush_ret);
 
     return ret;
 }
