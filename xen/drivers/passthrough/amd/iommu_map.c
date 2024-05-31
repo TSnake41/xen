@@ -617,6 +617,10 @@ int cf_check amd_iommu_flush_iotlb_pages(
     if ( (flush_flags & IOMMU_FLUSHF_all) || dfn_l + page_count < dfn_l )
     {
         amd_iommu_flush_all_pages(d, ctx);
+
+        if ( ctx )
+            arch_iommu_flush_free_queue(d, ctx);
+
         return 0;
     }
 
@@ -636,6 +640,9 @@ int cf_check amd_iommu_flush_iotlb_pages(
         amd_iommu_flush_pages(d, ctx, dfn_l, 18);
     else
         amd_iommu_flush_all_pages(d, ctx);
+
+    if ( ctx )
+        arch_iommu_flush_free_queue(d, ctx);
 
     return 0;
 }
