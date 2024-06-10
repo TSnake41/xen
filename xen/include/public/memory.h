@@ -589,7 +589,7 @@ struct xen_reserved_device_memory_map {
      * IN/OUT
      *
      * Gets set to the required number of entries when too low,
-     * signaled by error code -ERANGE.
+     * signaled by error code -ENOBUFS.
      */
     unsigned int nr_entries;
     /* OUT */
