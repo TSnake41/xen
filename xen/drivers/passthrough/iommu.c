@@ -50,7 +50,7 @@ int8_t __hwdom_initdata iommu_hwdom_reserved = -1;
 bool __read_mostly iommu_hap_pt_share = true;
 #endif
 
-uint16_t __read_mostly iommu_hwdom_nb_ctx;
+uint16_t __read_mostly iommu_hwdom_nb_ctx = 8;
 bool __read_mostly iommu_hwdom_nb_ctx_forced = false;
 
 #ifdef CONFIG_X86
