@@ -2507,7 +2507,7 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
 
     ctx->arch.vtd.didmap = xzalloc_array(u16, nr_iommus);
 
-    if (!ctx->arch.vtd.didmap)
+    if ( !ctx->arch.vtd.didmap )
         return -ENOMEM;
 
     ctx->arch.vtd.iommu_bitmap = xzalloc_array(unsigned long,
