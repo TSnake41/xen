@@ -2544,6 +2544,52 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
     return arch_iommu_context_init(d, ctx, flags);
 }
 
+static void intel_iommu_cleanup_pte(uint64_t pte_maddr)
+{
+    size_t i;
+    struct dma_pte *pte = map_vtd_domain_page(pte_maddr);
+
+    for (i = 0; i < (1 << PAGETABLE_ORDER); ++i)
+        if ( dma_pte_present(pte[i]) )
+            /* Remove the reference of the target mapping */
+            put_page(maddr_to_page(dma_pte_addr(pte[i])));
+
+    unmap_vtd_domain_page(pte);
+}
+
+static void intel_iommu_cleanup_superpage(unsigned int page_order, uint64_t pte_maddr)
+{
+    size_t i, page_count = 1 << page_order;
+    struct page_info *page = maddr_to_page(pte_maddr);
+
+    for (i = 0; i < page_count; page++)
+        put_page(page);
+}
+
+static void intel_iommu_cleanup_mappings(unsigned int nr_pt_levels, uint64_t pgd_maddr)
+{
+    size_t i;
+    struct dma_pte *pgd = map_vtd_domain_page(pgd_maddr);
+
+    for (i = 0; i < (1 << PAGETABLE_ORDER); ++i)
+    {
+        if ( dma_pte_present(pgd[i]) )
+        {
+            uint64_t pgd_maddr = dma_pte_addr(pgd[i]);
+
+            if ( dma_pte_superpage(pgd[i]) )
+                intel_iommu_cleanup_superpage(nr_pt_levels * SUPERPAGE_ORDER, pgd_maddr);
+            else if ( nr_pt_levels > 1 )
+                /* Next level is not PTE */
+                intel_iommu_cleanup_mappings(nr_pt_levels - 1, pgd_maddr);
+            else
+                intel_iommu_cleanup_pte(pgd_maddr);
+        }
+    }
+
+    unmap_vtd_domain_page(pgd);
+}
+
 static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
     struct acpi_drhd_unit *drhd;
@@ -2559,6 +2605,10 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
 
         xfree(ctx->arch.vtd.didmap);
     }
+
+    // Cleanup mappings
+    intel_iommu_cleanup_mappings(agaw_to_level(d->iommu.arch.vtd.agaw),
+                                 ctx->arch.vtd.pgd_maddr);
 
     pcidevs_unlock();
     return arch_iommu_context_teardown(d, ctx, flags);
