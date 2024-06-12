@@ -328,6 +328,7 @@ int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, 
 
     INIT_LIST_HEAD(&ctx->devices);
     ctx->id = ctx_no;
+    ctx->dying = false;
 
     return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
 }
@@ -375,6 +376,13 @@ int _iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no)
     }
 
     ctx = iommu_get_context(d, ctx_no);
+
+    if ( ctx->dying )
+    {
+        ret = -EINVAL;
+        goto unlock;
+    }
+
     ret = iommu_call(dom_iommu(d)->platform_ops, attach, d, dev, ctx);
 
     if ( !ret )
@@ -480,7 +488,6 @@ int _iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
     if (!next_dom)
         return _iommu_dettach_context(prev_dom, dev);
 
-
     hd = dom_iommu(prev_dom);
     same_domain = prev_dom == next_dom;
 
@@ -501,6 +508,12 @@ int _iommu_reattach_context(struct domain *prev_dom, struct domain *next_dom,
 
     prev_ctx = iommu_get_context(prev_dom, prev_ctx_no);
     next_ctx = iommu_get_context(next_dom, ctx_no);
+
+    if ( next_ctx->dying )
+    {
+        ret = -EINVAL;
+        goto unlock;
+    }
 
     ret = iommu_call(hd->platform_ops, reattach, next_dom, dev, prev_ctx,
                      next_ctx);
@@ -564,8 +577,10 @@ int _iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 fla
     if ( !dom_iommu(d)->platform_ops->context_teardown )
         return -ENOSYS;
 
+    ctx->dying = true;
+
     /* first reattach devices back to default context if needed */
-    if ( flags & IOMMU_TEARDOWNF_REATTACH_DEFAULT )
+    if ( flags & IOMMU_TEARDOWN_REATTACH_DEFAULT )
     {
         struct pci_dev *device;
         list_for_each_entry(device, &ctx->devices, context_list)
@@ -594,16 +609,16 @@ int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
     int ret;
     struct domain_iommu *hd = dom_iommu(d);
 
-    if (ctx_no == 0)
+    if ( ctx_no == 0 )
         return -EINVAL;
 
     spin_lock(&hd->lock);
-    if (!iommu_check_context(d, ctx_no))
+    if ( !iommu_check_context(d, ctx_no) )
         return -ENOENT;
 
     ret = _iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
 
-    if (!ret)
+    if ( !ret )
         clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
 
     spin_unlock(&hd->lock);

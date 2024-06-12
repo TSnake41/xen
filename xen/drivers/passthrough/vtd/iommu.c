@@ -30,6 +30,8 @@
 #include <xen/time.h>
 #include <xen/pci.h>
 #include <xen/pci_regs.h>
+#include <xen/sched.h>
+#include <xen/event.h>
 #include <xen/keyhandler.h>
 #include <xen/list.h>
 #include <xen/spinlock.h>
@@ -2516,6 +2518,7 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
         return -ENOMEM;
 
     ctx->arch.vtd.duplicated_rmrr = false;
+    ctx->arch.vtd.superpage_progress = 0;
 
     if ( flags & IOMMU_CONTEXT_INIT_default )
     {
@@ -2544,56 +2547,123 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
     return arch_iommu_context_init(d, ctx, flags);
 }
 
-static void intel_iommu_cleanup_pte(uint64_t pte_maddr)
+static int intel_iommu_cleanup_pte(uint64_t pte_maddr, bool preempt)
 {
     size_t i;
     struct dma_pte *pte = map_vtd_domain_page(pte_maddr);
 
     for (i = 0; i < (1 << PAGETABLE_ORDER); ++i)
         if ( dma_pte_present(pte[i]) )
+        {
             /* Remove the reference of the target mapping */
             put_page(maddr_to_page(dma_pte_addr(pte[i])));
 
+            if ( preempt )
+                dma_clear_pte(pte[i]);
+        }
+
     unmap_vtd_domain_page(pte);
+
+    return 0;
 }
 
-static void intel_iommu_cleanup_superpage(unsigned int page_order, uint64_t pte_maddr)
+/**
+ * Cleanup logic :
+ * Walk through the entire page table, progressively removing mappings if preempt.
+ *
+ * Return values :
+ *  - Report preemption with -ERESTART.
+ *  - Report empty pte/pgd with 0.
+ *
+ * When preempted during superpage operation, store state in vtd.superpage_progress.
+ */
+
+static int intel_iommu_cleanup_superpage(struct iommu_context *ctx,
+                                          unsigned int page_order, uint64_t pte_maddr,
+                                          bool preempt)
 {
-    size_t i, page_count = 1 << page_order;
+    size_t i = 0, page_count = 1 << page_order;
     struct page_info *page = maddr_to_page(pte_maddr);
 
-    for (i = 0; i < page_count; page++)
+    if ( preempt )
+        i = ctx->arch.vtd.superpage_progress;
+
+    for (; i < page_count; page++)
+    {
         put_page(page);
+
+        if ( preempt && (i & 0xff) && general_preempt_check() )
+        {
+            ctx->arch.vtd.superpage_progress = i + 1;
+            return -ERESTART;
+        }
+    }
+
+    if ( preempt )
+        ctx->arch.vtd.superpage_progress = 0;
+
+    return 0;
 }
 
-static void intel_iommu_cleanup_mappings(unsigned int nr_pt_levels, uint64_t pgd_maddr)
+static int intel_iommu_cleanup_mappings(struct iommu_context *ctx,
+                                         unsigned int nr_pt_levels, uint64_t pgd_maddr,
+                                         bool preempt)
 {
     size_t i;
+    int rc;
     struct dma_pte *pgd = map_vtd_domain_page(pgd_maddr);
 
     for (i = 0; i < (1 << PAGETABLE_ORDER); ++i)
     {
         if ( dma_pte_present(pgd[i]) )
         {
-            uint64_t pgd_maddr = dma_pte_addr(pgd[i]);
+            uint64_t pte_maddr = dma_pte_addr(pgd[i]);
 
             if ( dma_pte_superpage(pgd[i]) )
-                intel_iommu_cleanup_superpage(nr_pt_levels * SUPERPAGE_ORDER, pgd_maddr);
-            else if ( nr_pt_levels > 1 )
+                rc = intel_iommu_cleanup_superpage(ctx, nr_pt_levels * SUPERPAGE_ORDER,
+                                                   pte_maddr, preempt);
+            else if ( nr_pt_levels > 2 )
                 /* Next level is not PTE */
-                intel_iommu_cleanup_mappings(nr_pt_levels - 1, pgd_maddr);
+                rc = intel_iommu_cleanup_mappings(ctx, nr_pt_levels - 1,
+                                                  pte_maddr, preempt);
             else
-                intel_iommu_cleanup_pte(pgd_maddr);
+                rc = intel_iommu_cleanup_pte(pte_maddr, preempt);
+
+            if ( preempt && !rc )
+                /* Fold pgd (no more mappings in it) */
+                dma_clear_pte(pgd[i]);
+            else if ( preempt && rc == -ERESTART )
+            {
+                unmap_vtd_domain_page(pgd);
+                return rc;
+            }
+
+            if ( preempt && general_preempt_check() )
+            {
+                unmap_domain_page(pgd);
+                return -ERESTART;
+            }
         }
     }
 
     unmap_vtd_domain_page(pgd);
+
+    return 0;
 }
 
 static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags)
 {
     struct acpi_drhd_unit *drhd;
     pcidevs_lock();
+
+    // Cleanup mappings
+    if ( intel_iommu_cleanup_mappings(ctx, agaw_to_level(d->iommu.arch.vtd.agaw),
+                                      ctx->arch.vtd.pgd_maddr,
+                                      flags & IOMMUF_preempt) < 0 )
+    {
+        pcidevs_unlock();
+        return -ERESTART;
+    }
 
     if (ctx->arch.vtd.didmap)
     {
@@ -2605,10 +2675,6 @@ static int intel_iommu_context_teardown(struct domain *d, struct iommu_context *
 
         xfree(ctx->arch.vtd.didmap);
     }
-
-    // Cleanup mappings
-    intel_iommu_cleanup_mappings(agaw_to_level(d->iommu.arch.vtd.agaw),
-                                 ctx->arch.vtd.pgd_maddr);
 
     pcidevs_unlock();
     return arch_iommu_context_teardown(d, ctx, flags);

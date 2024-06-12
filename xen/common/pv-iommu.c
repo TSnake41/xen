@@ -19,6 +19,10 @@
 
 #define PVIOMMU_MAX_PAGES 256 /* Move to Kconfig ? */
 
+/* Allowed masks for each sub-operation */
+#define ALLOC_OP_FLAGS_MASK (0)
+#define FREE_OP_FLAGS_MASK (IOMMU_TEARDOWN_REATTACH_DEFAULT)
+
 static int get_paged_frame(struct domain *d, gfn_t gfn, mfn_t *mfn,
                            struct page_info **page, int readonly)
 {
@@ -83,7 +87,7 @@ static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
     u16 ctx_no = 0;
     int status = 0;
 
-    status = iommu_context_alloc(d, &ctx_no, op->flags);
+    status = iommu_context_alloc(d, &ctx_no, op->flags & ALLOC_OP_FLAGS_MASK);
 
     if (status < 0)
         return status;
@@ -96,7 +100,8 @@ static long alloc_context_op(struct pv_iommu_op *op, struct domain *d)
 
 static long free_context_op(struct pv_iommu_op *op, struct domain *d)
 {
-    return iommu_context_free(d, op->ctx_no, op->flags);
+    return iommu_context_free(d, op->ctx_no,
+                              IOMMU_TEARDOWN_PREEMPT | (op->flags & FREE_OP_FLAGS_MASK));
 }
 
 static long reattach_device_op(struct pv_iommu_op *op, struct domain *d)

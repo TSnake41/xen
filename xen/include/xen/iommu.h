@@ -384,6 +384,7 @@ struct iommu_context {
     struct arch_iommu_context arch;
 
     bool opaque; /* context can't be modified nor accessed (e.g HAP) */
+    bool dying; /* the context is tearing down */
 };
 
 struct iommu_context_list {
@@ -482,7 +483,8 @@ bool iommu_check_context(struct domain *d, u16 ctx_no);
 #define IOMMU_CONTEXT_INIT_quarantine (1 << 1)
 int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, u32 flags);
 
-#define IOMMU_TEARDOWNF_REATTACH_DEFAULT (1 << 0)
+#define IOMMU_TEARDOWN_REATTACH_DEFAULT (1 << 0)
+#define IOMMU_TEARDOWN_PREEMPT (1 << 1)
 int iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
 
 int iommu_context_alloc(struct domain *d, u16 *ctx_no, u32 flags);

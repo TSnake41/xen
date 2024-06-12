@@ -52,6 +52,7 @@ struct arch_iommu_context
             domid_t *didmap; /* per-iommu DID */
             unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the context uses */
             bool duplicated_rmrr; /* tag indicating that duplicated rmrr mappings are mapped */
+            uint32_t superpage_progress; /* superpage progress during teardown */
         } vtd;
         /* AMD IOMMU */
         struct {
