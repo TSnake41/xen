@@ -91,3 +91,17 @@ choice
 	config IOMMU_QUARANTINE_SCRATCH_PAGE
 		bool "scratch page"
 endchoice
+
+config X86_ARENA_ORDER
+	int "IOMMU arena order" if EXPERT
+	depends on X86
+	default 9
+	help
+	  Specifies the default size of the Dom0 IOMMU arena allocator.
+	  Use 2^order pages for arena. If your system has lots of PCI devices or if you
+	  encounter IOMMU errors in Dom0, try increasing this value.
+	  This value can be overriden with command-line dom0-iommu=arena-order=N.
+
+	  [7] 128 pages, 512 KB arena
+	  [9] 512 pages, 2 MB arena (default)
+	  [11] 2048 pages, 8 MB arena
