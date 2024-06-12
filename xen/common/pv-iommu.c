@@ -300,6 +300,9 @@ long do_iommu_op(XEN_GUEST_HANDLE_PARAM(void) arg)
 
     ret = do_iommu_sub_op(&op);
 
+    if ( ret == -ERESTART )
+        return hypercall_create_continuation(__HYPERVISOR_iommu_op, "h", arg);
+
     if ( unlikely(copy_to_guest(arg, &op, 1)) )
         return -EFAULT;
 
