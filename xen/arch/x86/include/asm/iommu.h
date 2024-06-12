@@ -2,13 +2,17 @@
 #ifndef __ARCH_X86_IOMMU_H__
 #define __ARCH_X86_IOMMU_H__
 
+#include <xen/bitmap.h>
 #include <xen/errno.h>
 #include <xen/list.h>
 #include <xen/mem_access.h>
 #include <xen/spinlock.h>
+#include <xen/stdbool.h>
 #include <asm/apicdef.h>
 #include <asm/cache.h>
 #include <asm/processor.h>
+
+#include "arena.h"
 
 #define DEFAULT_DOMAIN_ADDRESS_WIDTH 48
 
@@ -31,27 +35,45 @@ typedef uint64_t daddr_t;
 #define dfn_to_daddr(dfn) __dfn_to_daddr(dfn_x(dfn))
 #define daddr_to_dfn(daddr) _dfn(__daddr_to_dfn(daddr))
 
-struct arch_iommu
+struct arch_iommu_context
 {
-    spinlock_t mapping_lock; /* io page table lock */
-    struct {
-        struct page_list_head list;
-        spinlock_t lock;
-    } pgtables;
-
+    struct page_list_head pgtables;
     struct list_head identity_maps;
+
+    /* Queue for freeing pages */
+    struct page_list_head free_queue;
+
+    /* Is this context reusing domain P2M ? */
+    bool hap_context;
 
     union {
         /* Intel VT-d */
         struct {
             uint64_t pgd_maddr; /* io page directory machine address */
+            domid_t *didmap; /* per-iommu DID */
+            unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the context uses */
+            uint32_t superpage_progress; /* superpage progress during teardown */
+        } vtd;
+        /* AMD IOMMU */
+        struct {
+            struct page_info *root_table;
+        } amd;
+    };
+};
+
+struct arch_iommu
+{
+    struct iommu_arena pt_arena; /* allocator for non-default contexts */
+
+    union {
+        /* Intel VT-d */
+        struct {
             unsigned int agaw; /* adjusted guest address width, 0 is level 2 30-bit */
-            unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the domain uses */
         } vtd;
         /* AMD IOMMU */
         struct {
             unsigned int paging_mode;
-            struct page_info *root_table;
+            struct guest_iommu *g_iommu;
         } amd;
     };
 };
@@ -109,10 +131,13 @@ static inline void iommu_disable_x2apic(void)
         iommu_vcall(&iommu_ops, disable_x2apic);
 }
 
-int iommu_identity_mapping(struct domain *d, p2m_access_t p2ma,
-                           paddr_t base, paddr_t end,
+int iommu_identity_mapping(struct domain *d, struct iommu_context *ctx,
+                           p2m_access_t p2ma, paddr_t base, paddr_t end,
                            unsigned int flag);
-void iommu_identity_map_teardown(struct domain *d);
+void iommu_identity_map_teardown(struct domain *d, struct iommu_context *ctx);
+bool iommu_identity_map_check(struct domain *d, struct iommu_context *ctx,
+                              mfn_t mfn);
+
 
 extern bool untrusted_msi;
 
@@ -128,14 +153,19 @@ unsigned long *iommu_init_domid(domid_t reserve);
 domid_t iommu_alloc_domid(unsigned long *map);
 void iommu_free_domid(domid_t domid, unsigned long *map);
 
-int __must_check iommu_free_pgtables(struct domain *d);
+struct iommu_context;
+int __must_check iommu_free_pgtables(struct domain *d, struct iommu_context *ctx);
 struct domain_iommu;
 struct page_info *__must_check iommu_alloc_pgtable(struct domain_iommu *hd,
+                                                   struct iommu_context *ctx,
                                                    uint64_t contig_mask);
-void iommu_queue_free_pgtable(struct domain_iommu *hd, struct page_info *pg);
+void iommu_queue_free_pgtable(struct iommu_context *ctx, struct page_info *pg);
 
 /* Check [start, end] unity map range for correctness. */
 bool iommu_unity_region_ok(const char *prefix, mfn_t start, mfn_t end);
+int arch_iommu_context_init(struct domain *d, struct iommu_context *ctx, u32 flags);
+int arch_iommu_context_teardown(struct domain *d, struct iommu_context *ctx, u32 flags);
+int arch_iommu_flush_free_queue(struct domain *d, struct iommu_context *ctx);
 
 #endif /* !__ARCH_X86_IOMMU_H__ */
 /*

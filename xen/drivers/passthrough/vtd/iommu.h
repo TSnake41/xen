@@ -104,7 +104,7 @@
 #define DMA_TLB_GLOBAL_FLUSH (((u64)1) << 60)
 #define DMA_TLB_DSI_FLUSH (((u64)2) << 60)
 #define DMA_TLB_PSI_FLUSH (((u64)3) << 60)
-#define DMA_TLB_IIRG(x) (((x) >> 60) & 7) 
+#define DMA_TLB_IIRG(x) (((x) >> 60) & 7)
 #define DMA_TLB_IAIG(val) (((val) >> 57) & 7)
 #define DMA_TLB_DID(x) (((uint64_t)((x) & 0xffff)) << 32)
 
@@ -506,9 +506,7 @@ struct vtd_iommu {
     } flush;
 
     struct list_head ats_devices;
-    unsigned long *pseudo_domid_map; /* "pseudo" domain id bitmap */
     unsigned long *domid_bitmap;  /* domain id bitmap */
-    domid_t *domid_map;           /* domain id mapping array */
     uint32_t version;
 };
 
