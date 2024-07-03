@@ -38,6 +38,7 @@ static bool __hwdom_initdata iommu_hwdom_none;
 bool __hwdom_initdata iommu_hwdom_strict;
 bool __read_mostly iommu_hwdom_passthrough;
 bool __hwdom_initdata iommu_hwdom_inclusive;
+bool __read_mostly iommu_hwdom_no_dma;
 int8_t __hwdom_initdata iommu_hwdom_reserved = -1;
 
 #ifndef iommu_hap_pt_share
@@ -177,6 +178,8 @@ static int __init cf_check parse_dom0_iommu_param(const char *s)
             else
                 printk(XENLOG_WARNING "'arena-order=%lld' value out of range!\n", ll_val);
         }
+        else if ( (val = parse_boolean("no-dma", s, ss)) >= 0 )
+            iommu_hwdom_no_dma = val;
         else
             rc = -EINVAL;
 

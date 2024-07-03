@@ -1688,12 +1688,7 @@ static int __must_check cf_check intel_iommu_map_page(
     ASSERT((hd->platform_ops->page_sizes >> IOMMUF_order(flags)) &
            PAGE_SIZE_4K);
 
-    /* Do nothing if VT-d shares EPT page table */
-    if ( iommu_use_hap_pt(d) && !ctx->id )
-        return 0;
-
-    /* Do nothing if hardware domain and iommu supports pass thru. */
-    if ( iommu_hwdom_passthrough && is_hardware_domain(d) && !ctx->id )
+    if ( ctx->opaque )
         return 0;
 
     /*
@@ -1804,12 +1799,7 @@ static int __must_check cf_check intel_iommu_unmap_page(
      */
     ASSERT((hd->platform_ops->page_sizes >> order) & PAGE_SIZE_4K);
 
-    /* Do nothing if VT-d shares EPT page table */
-    if ( iommu_use_hap_pt(d) && !ctx->id )
-        return 0;
-
-    /* Do nothing if hardware domain and iommu supports pass thru. */
-    if ( iommu_hwdom_passthrough && is_hardware_domain(d) )
+    if ( ctx->opaque )
         return 0;
 
     /* get target level pte */
@@ -1869,15 +1859,8 @@ static int cf_check intel_iommu_lookup_page(
 {
     uint64_t val;
 
-    /*
-     * If VT-d shares EPT page table or if the domain is the hardware
-     * domain and iommu_passthrough is set then pass back the dfn.
-     */
-    if ( (iommu_use_hap_pt(d) ||
-         (iommu_hwdom_passthrough && is_hardware_domain(d)))
-         && !ctx->id )
+    if ( ctx->opaque )
         return -EOPNOTSUPP;
-
 
     val = addr_to_dma_page_maddr(d, ctx, dfn_to_daddr(dfn), 0, NULL, false);
 
@@ -2519,6 +2502,17 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
     {
         ctx->arch.vtd.pgd_maddr = 0;
 
+        /*
+         * Context is considered "opaque" (non-managed) in these cases :
+         *  - HAP is enabled, in this case, the pagetable is not managed by the
+         *    IOMMU code, thus opaque
+         *  - IOMMU is in passthrough which means that there is no actual pagetable
+         *
+         * If no-dma mode is specified, it's always non-opaque as the pagetable is
+         * always managed regardless of the rest.
+         */
+        ctx->opaque = !iommu_hwdom_no_dma && (iommu_use_hap_pt(d) || iommu_hwdom_passthrough);
+
         /* Populate context DID map using domain id. */
         for_each_drhd_unit(drhd)
         {
@@ -2534,10 +2528,11 @@ static int intel_iommu_context_init(struct domain *d, struct iommu_context *ctx,
             ctx->arch.vtd.didmap[drhd->iommu->index] =
                 iommu_alloc_domid(drhd->iommu->pseudo_domid_map);
         }
+    }
 
+    if ( !ctx->opaque )
         /* Create initial context page */
         addr_to_dma_page_maddr(d, ctx, 0, min_pt_levels, NULL, true);
-    }
 
     return arch_iommu_context_init(d, ctx, flags);
 }
@@ -2606,7 +2601,13 @@ static int intel_iommu_cleanup_mappings(struct iommu_context *ctx,
 {
     size_t i;
     int rc;
-    struct dma_pte *pgd = map_vtd_domain_page(pgd_maddr);
+    struct dma_pte *pgd;
+
+    if ( ctx->opaque )
+        /* don't touch opaque contexts */
+        return 0;
+
+    pgd = map_vtd_domain_page(pgd_maddr);
 
     for (i = 0; i < (1 << PAGETABLE_ORDER); ++i)
     {
@@ -2861,7 +2862,7 @@ static int intel_iommu_attach(struct domain *d, struct pci_dev *pdev,
     if (!pdev || !drhd)
         return -EINVAL;
 
-    if ( ctx->id )
+    if ( !ctx->opaque )
     {
         ret = intel_iommu_map_dev_rmrr(d, pdev, ctx);
 
@@ -2893,7 +2894,7 @@ static int intel_iommu_detach(struct domain *d, struct pci_dev *pdev,
     if ( ret )
         return ret;
 
-    if ( prev_ctx->id )
+    if ( !prev_ctx->opaque )
         WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
 
     check_cleanup_domid_map(d, prev_ctx, NULL, drhd->iommu);
@@ -2911,7 +2912,7 @@ static int intel_iommu_reattach(struct domain *d, struct pci_dev *pdev,
     if (!pdev || !drhd)
         return -EINVAL;
 
-    if ( ctx->id )
+    if ( !ctx->opaque )
     {
         ret = intel_iommu_map_dev_rmrr(d, pdev, ctx);
 
@@ -2924,7 +2925,7 @@ static int intel_iommu_reattach(struct domain *d, struct pci_dev *pdev,
     if ( ret )
         return ret;
 
-    if ( prev_ctx->id )
+    if ( !prev_ctx->opaque )
         WARN_ON(intel_iommu_unmap_dev_rmrr(d, pdev, prev_ctx));
 
     /* We are overwriting an entry, cleanup previous domid if needed. */

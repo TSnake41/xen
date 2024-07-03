@@ -336,6 +336,7 @@ int iommu_context_init(struct domain *d, struct iommu_context *ctx, u16 ctx_no, 
     INIT_LIST_HEAD(&ctx->devices);
     ctx->id = ctx_no;
     ctx->dying = false;
+    ctx->opaque = false; /* assume opaque by default */
 
     return iommu_call(dom_iommu(d)->platform_ops, context_init, d, ctx, flags);
 }
