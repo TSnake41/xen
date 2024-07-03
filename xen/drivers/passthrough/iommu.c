@@ -269,6 +269,12 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
         printk(XENLOG_INFO "Dom0 uses %lu IOMMU contexts\n",
                (unsigned long)iommu_hwdom_nb_ctx);
         hd->other_contexts.count = iommu_hwdom_nb_ctx - 1;
+
+        if ( iommu_hwdom_no_dma )
+        {
+            hd->hap_pt_share = false;
+            hd->need_sync = false;
+        }
     }
     else if ( d == dom_io )
     {
