@@ -156,6 +156,9 @@ int iommu_legacy_map(struct domain *d, dfn_t dfn, mfn_t mfn,
     if (iommu_get_context(d, 0)->opaque)
         return 0;
 
+    if (is_hardware_domain(d) && iommu_hwdom_no_dma)
+        return 0;
+
     spin_lock(&hd->lock);
     rc = _iommu_map(d, dfn, mfn, page_count, flags, &flush_flags, 0);
 
@@ -249,6 +252,9 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
     int rc;
 
     if (iommu_get_context(d, 0)->opaque)
+        return 0;
+
+    if (is_hardware_domain(d) && iommu_hwdom_no_dma)
         return 0;
 
     spin_lock(&hd->lock);
