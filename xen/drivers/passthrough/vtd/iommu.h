@@ -99,12 +99,22 @@
 #define ecap_pass_thru(e)        (((e) >> 6) & 1)
 #define ecap_snp_ctl(e)          (((e) >> 7) & 1)
 
+#define ecap_mts(e)              (((e) >> 25) & 1)
+#define ecap_nest(e)             (((e) >> 26) & 1)
+
+#define ecap_smts(e)             (((e) >> 43) & 1)
+#define ecap_vcs(e)              (((e) >> 44) & 1)
+#define ecap_ssts(e)             (((e) >> 46) & 1)
+#define ecap_fsts(e)             (((e) >> 47) & 1)
+#define ecap_smpwcs(e)           (((e) >> 48) & 1)
+#define ecap_rps(e)              (((e) >> 48) & 1)
+
 /* IOTLB_REG */
 #define DMA_TLB_FLUSH_GRANU_OFFSET  60
 #define DMA_TLB_GLOBAL_FLUSH (((u64)1) << 60)
 #define DMA_TLB_DSI_FLUSH (((u64)2) << 60)
 #define DMA_TLB_PSI_FLUSH (((u64)3) << 60)
-#define DMA_TLB_IIRG(x) (((x) >> 60) & 7) 
+#define DMA_TLB_IIRG(x) (((x) >> 60) & 7)
 #define DMA_TLB_IAIG(val) (((val) >> 57) & 7)
 #define DMA_TLB_DID(x) (((uint64_t)((x) & 0xffff)) << 32)
 
@@ -229,6 +239,60 @@ struct context_entry {
 #define context_set_address_width(c, val) \
     do {(c).hi &= 0xfffffff8; (c).hi |= (val) & 7;} while(0)
 #define context_clear_entry(c) do {(c).lo = 0; (c).hi = 0;} while(0)
+
+struct __attribute__((packed, aligned(16))) scalable_context_entry {
+    bool present: 1;
+    bool fault_disable: 1;
+    bool device_tlb_enable: 1;
+    bool pasid_enable: 1;
+    bool page_request_enable: 1;
+    uint8_t : 4;
+    uint8_t pasid_dir_size: 3;
+    uint64_t pasid_dir_frame: 52;
+    uint32_t rid_pasid: 20;
+    bool rid_priv: 1;
+    uint8_t pad[21];
+};
+
+struct __attribute((packed, aligned(16))) scalable_dir_entry {
+    bool present: 1;
+    bool fault_disable: 1;
+    uint16_t : 10;
+    uint64_t pasid_tab_frame : 52;
+};
+
+struct __attribute__((packed, aligned(16))) scalable_table_entry {
+    bool present: 1;
+    bool fault_disable: 1;
+    uint8_t address_width: 3;
+    bool : 1;
+#define SCALABLE_PGTT_FIRST_STAGE  1
+#define SCALABLE_PGTT_SECOND_STAGE 2
+#define SCALABLE_PGTT_NESTED       3
+#define SCALABLE_PGTT_PASS_THRU    4
+    uint8_t translation_type: 3;
+    bool second_stage_ad_bit: 1;
+    uint8_t : 2;
+    uint64_t second_stage_root_frame: 51;
+    bool : 1;
+    uint16_t domain_id: 16;
+    uint8_t : 7;
+    bool page_walk_snp: 1;
+    bool page_snp: 1;
+    bool cache_disable: 1;
+    bool extended_memory_type_enable: 1;
+    uint8_t : 5;
+    uint32_t pat : 32;
+    bool supervisor_request_enable: 1;
+    bool : 1;
+    uint8_t first_stage_paging_mode: 2;
+    bool write_protect_enable: 1;
+    uint8_t : 2;
+    bool extended_accessed_flag_enable: 1;
+    uint8_t : 4;
+    uint64_t first_stage_root_frame: 52;
+    uint8_t pad[40];
+};
 
 /* page table handling */
 #define LEVEL_STRIDE       (9)
