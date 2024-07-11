@@ -19,7 +19,8 @@
 #include <xen/bitops.h>
 #include <xen/bitmap.h>
 
-bool iommu_check_context(struct domain *d, u16 ctx_no) {
+bool iommu_check_context(struct domain *d, u16 ctx_no)
+{
     struct domain_iommu *hd = dom_iommu(d);
 
     if (ctx_no == 0)
@@ -31,13 +32,14 @@ bool iommu_check_context(struct domain *d, u16 ctx_no) {
     return test_bit(ctx_no - 1, hd->other_contexts.bitmap);
 }
 
-struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no) {
+struct iommu_context *iommu_get_context(struct domain *d, u16 ctx_no)
+{
     struct domain_iommu *hd = dom_iommu(d);
 
-    if (!iommu_check_context(d, ctx_no))
+    if ( !iommu_check_context(d, ctx_no) )
         return NULL;
 
-    if (ctx_no == 0)
+    if ( ctx_no == 0 )
         return &hd->default_ctx;
     else
         return &hd->other_contexts.map[ctx_no - 1];
@@ -76,12 +78,16 @@ long _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
     unsigned long i;
     unsigned int order, j = 0;
     int rc = 0;
+    struct iommu_context *ctx;
 
     if ( !is_iommu_enabled(d) )
         return 0;
 
-    if (!iommu_check_context(d, ctx_no))
+    if ( !(ctx = iommu_get_context(d, ctx_no)) )
         return -ENOENT;
+
+    if ( ctx->dying )
+        return -EINVAL;
 
     ASSERT(!IOMMUF_order(flags));
 
@@ -99,7 +105,7 @@ long _iommu_map(struct domain *d, dfn_t dfn0, mfn_t mfn0,
 
         rc = iommu_call(hd->platform_ops, map_page, d, dfn, mfn,
                         flags | IOMMUF_order(order), flush_flags,
-                        iommu_get_context(d, ctx_no));
+                        ctx);
 
         if ( likely(!rc) )
             continue;
@@ -185,12 +191,16 @@ long _iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
     unsigned long i;
     unsigned int order, j = 0;
     int rc = 0;
+    struct iommu_context *ctx;
 
     if ( !is_iommu_enabled(d) )
         return 0;
 
-    if ( !iommu_check_context(d, ctx_no) )
+    if ( !(ctx = iommu_get_context(d, ctx_no)) )
         return -ENOENT;
+
+    if ( ctx->dying )
+        return -EINVAL;
 
     ASSERT(!(flags & ~IOMMUF_preempt));
 
@@ -208,7 +218,7 @@ long _iommu_unmap(struct domain *d, dfn_t dfn0, unsigned long page_count,
 
         err = iommu_call(hd->platform_ops, unmap_page, d, dfn,
                          flags | IOMMUF_order(order), flush_flags,
-                         iommu_get_context(d, ctx_no));
+                         ctx);
 
         if ( likely(!err) )
             continue;
@@ -272,15 +282,18 @@ int _iommu_lookup_page(struct domain *d, dfn_t dfn, mfn_t *mfn,
                       unsigned int *flags, u16 ctx_no)
 {
     struct domain_iommu *hd = dom_iommu(d);
+    struct iommu_context *ctx;
 
     if ( !is_iommu_enabled(d) || !hd->platform_ops->lookup_page )
         return -EOPNOTSUPP;
 
-    if (!iommu_check_context(d, ctx_no))
+    if ( !(ctx = iommu_get_context(d, ctx_no)) )
         return -ENOENT;
 
-    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags,
-                      iommu_get_context(d, ctx_no));
+    if ( ctx->dying )
+        return -EINVAL;
+
+    return iommu_call(hd->platform_ops, lookup_page, d, dfn, mfn, flags, ctx);
 }
 
 int _iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
@@ -288,6 +301,7 @@ int _iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
 {
     struct domain_iommu *hd = dom_iommu(d);
     int rc;
+    struct iommu_context *ctx;
 
     if ( !is_iommu_enabled(d) || !hd->platform_ops->iotlb_flush ||
          !page_count || !flush_flags )
@@ -296,11 +310,14 @@ int _iommu_iotlb_flush(struct domain *d, dfn_t dfn, unsigned long page_count,
     if ( dfn_eq(dfn, INVALID_DFN) )
         return -EINVAL;
 
-    if ( !iommu_check_context(d, ctx_no) )
+    if ( !(ctx = iommu_get_context(d, ctx_no)) )
         return -ENOENT;
 
-    rc = iommu_call(hd->platform_ops, iotlb_flush, d, iommu_get_context(d, ctx_no),
-                    dfn, page_count, flush_flags);
+    if ( ctx->dying )
+        return -EINVAL;
+
+    rc = iommu_call(hd->platform_ops, iotlb_flush, d, ctx, dfn, page_count,
+                    flush_flags);
     if ( unlikely(rc) )
     {
         if ( !d->is_shutting_down && printk_ratelimit() )
@@ -376,13 +393,11 @@ int _iommu_attach_context(struct domain *d, device_t *dev, u16 ctx_no)
 
     pcidevs_lock();
 
-    if ( !iommu_check_context(d, ctx_no) )
+    if ( !(ctx = iommu_get_context(d, ctx_no)) )
     {
         ret = -ENOENT;
         goto unlock;
     }
-
-    ctx = iommu_get_context(d, ctx_no);
 
     if ( ctx->dying )
     {
@@ -614,15 +629,16 @@ int iommu_context_free(struct domain *d, u16 ctx_no, u32 flags)
 {
     int ret;
     struct domain_iommu *hd = dom_iommu(d);
+    struct iommu_context *ctx;
 
     if ( ctx_no == 0 )
         return -EINVAL;
 
     spin_lock(&hd->lock);
-    if ( !iommu_check_context(d, ctx_no) )
+    if ( !(ctx = iommu_get_context(d, ctx_no)) )
         return -ENOENT;
 
-    ret = _iommu_context_teardown(d, iommu_get_context(d, ctx_no), flags);
+    ret = _iommu_context_teardown(d, ctx, flags);
 
     if ( !ret )
         clear_bit(ctx_no - 1, hd->other_contexts.bitmap);
