@@ -819,7 +819,7 @@ out:
     pcidevs_unlock();
     if ( !ret )
     {
-        printk(XENLOG_DEBUG "PCI add %s %pp\n", type, &pdev->sbdf);
+        //printk(XENLOG_DEBUG "PCI add %s %pp\n", type, &pdev->sbdf);
         while ( pdev->phantom_stride )
         {
             func += pdev->phantom_stride;
