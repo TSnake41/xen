@@ -640,6 +640,7 @@ int arch_sanitise_domain_config(struct xen_domctl_createdomain *config)
     unsigned int max_vcpus;
     unsigned int altp2m_mode = MASK_EXTR(config->altp2m_opts,
                                          XEN_DOMCTL_ALTP2M_mode_mask);
+    bool coco = config->flags & XEN_DOMCTL_CDF_coco;
 
     if ( hvm ? !hvm_enabled : !IS_ENABLED(CONFIG_PV) )
     {
@@ -735,6 +736,12 @@ int arch_sanitise_domain_config(struct xen_domctl_createdomain *config)
     if ( altp2m_mode && !hap )
     {
         dprintk(XENLOG_INFO, "altp2m is only supported with HAP\n");
+        return -EINVAL;
+    }
+
+    if ( coco &  !IS_ENABLED(CONFIG_COCO) )
+    {
+        dprintk(XENLOG_INFO, "Confidential Computing not enabled\n");
         return -EINVAL;
     }
 
