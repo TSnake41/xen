@@ -1685,6 +1685,9 @@ int xc_hvm_param_get(xc_interface *handle, uint32_t dom, uint32_t param, uint64_
 int xc_set_hvm_param(xc_interface *handle, uint32_t dom, int param, unsigned long value);
 int xc_get_hvm_param(xc_interface *handle, uint32_t dom, int param, unsigned long *value);
 
+/* HVM SEV launch_update_data */
+int xc_dom_coco_op(xc_interface *handle, unsigned int cmd, domid_t domid, uint64_t arg1, uint64_t arg2);
+
 /* HVM guest pass-through */
 int xc_assign_device(xc_interface *xch,
                      uint32_t domid,

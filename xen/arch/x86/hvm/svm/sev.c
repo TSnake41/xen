@@ -31,6 +31,7 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
         case COCO_DOM_ADD_MEM: {
             struct sev_data_launch_update_data sd_lud;
 
+            sd_lud.reserved = 0;
             sd_lud.handle = d->arch.hvm.svm.asp_handle;
             sd_lud.address = arg1; /* can we trust dom0 for paddr? */
             sd_lud.len = arg2;
