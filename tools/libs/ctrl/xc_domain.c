@@ -22,6 +22,7 @@
 #include "xc_private.h"
 #include <xen/memory.h>
 #include <xen/hvm/hvm_op.h>
+#include <xen/hvm/coco.h>
 
 int xc_domain_create(xc_interface *xch, uint32_t *pdomid,
                      struct xen_domctl_createdomain *config)
@@ -1479,6 +1480,32 @@ int xc_get_hvm_param(xc_interface *handle, uint32_t dom, int param, unsigned lon
         return ret;
     *value = v;
     return 0;
+}
+
+/* Toolstack specific function which calls svm_dom_coco_op via hypercall*/
+int xc_dom_coco_op(xc_interface *handle, unsigned int cmd, domid_t domid, uint64_t arg1, uint64_t arg2)
+{
+    DECLARE_HYPERCALL_BUFFER(sev_launch_update_data_t, arg);
+    int rc;
+
+    arg = xc_hypercall_buffer_alloc(handle, arg, sizeof(*arg));
+    if ( arg == NULL )
+        return -1;
+
+    arg->cmd = 1;
+    arg->domid = domid;
+    arg->address = arg1;
+    arg->len = arg2;
+
+    rc = xencall2(handle->xcall, __HYPERVISOR_dom_coco_op,
+                  COCO_DOM_ADD_MEM,
+                  HYPERCALL_BUFFER_AS_ARG(arg));
+
+    xc_hypercall_buffer_free(handle, arg);
+
+    printf("End of xc_dom_coco_op\n");
+
+    return rc;
 }
 
 int xc_domain_setdebugging(xc_interface *xch,
