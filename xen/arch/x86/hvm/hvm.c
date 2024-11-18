@@ -3499,6 +3499,9 @@ unsigned int clear_user_hvm(void *to, unsigned int len)
 {
     int rc;
 
+    if ( is_sev_domain(current->domain) )
+        return HVMTRANS_unhandleable;
+
     if ( current->hcall_compat && is_compat_arg_xlat_range(to, len) )
     {
         memset(to, 0x00, len);
