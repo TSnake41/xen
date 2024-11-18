@@ -3450,6 +3450,9 @@ enum hvm_translation_result hvm_copy_to_guest_linear(
     unsigned long addr, const void *buf, unsigned int size, uint32_t pfec,
     pagefault_info_t *pfinfo)
 {
+    if ( is_sev_domain(current->domain) )
+        return HVMTRANS_unhandleable;
+
     return __hvm_copy((void *)buf /* HVMCOPY_to_guest doesn't modify */,
                       addr, size, current, HVMCOPY_to_guest | HVMCOPY_linear,
                       PFEC_page_present | PFEC_write_access | pfec, pfinfo);
@@ -3459,6 +3462,9 @@ enum hvm_translation_result hvm_copy_from_guest_linear(
     void *buf, unsigned long addr, unsigned int size, uint32_t pfec,
     pagefault_info_t *pfinfo)
 {
+    if ( is_sev_domain(current->domain) )
+        return HVMTRANS_unhandleable;
+
     return __hvm_copy(buf, addr, size, current,
                       HVMCOPY_from_guest | HVMCOPY_linear,
                       PFEC_page_present | pfec, pfinfo);
@@ -3468,6 +3474,9 @@ enum hvm_translation_result hvm_copy_from_vcpu_linear(
     void *buf, unsigned long addr, unsigned int size, struct vcpu *v,
     unsigned int pfec)
 {
+    if ( is_sev_domain(v->domain) )
+        return HVMTRANS_unhandleable;
+
     return __hvm_copy(buf, addr, size, v,
                       HVMCOPY_from_guest | HVMCOPY_linear,
                       PFEC_page_present | pfec, NULL);
