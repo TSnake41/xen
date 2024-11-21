@@ -584,7 +584,7 @@ static int sanitise_domain_config(struct xen_domctl_createdomain *config)
 
     if ( coco )
     {
-        dprintk(XENLOG_INFO, "coco is being requested to be enabled\n");
+        printk(XENLOG_INFO "coco is being requested to be enabled\n");
     }
 
     return arch_sanitise_domain_config(config);

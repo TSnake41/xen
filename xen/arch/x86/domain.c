@@ -884,6 +884,8 @@ int arch_domain_create(struct domain *d,
 
     if ( is_hvm_domain(d) )
     {
+        p_asid = &d->arch.hvm.n1asid;
+        hvm_asid_domain_create(p_asid);
         if ( (rc = hvm_domain_initialise(d, config)) != 0 )
             goto fail;
     }
@@ -918,11 +920,6 @@ int arch_domain_create(struct domain *d,
     d->arch.msr_relaxed = config->arch.misc_flags & XEN_X86_MSR_RELAXED;
 
     spec_ctrl_init_domain(d);
-
-    if ( is_hvm_domain(d) ) {
-        p_asid = &d->arch.hvm.n1asid;
-        hvm_asid_domain_create(p_asid);
-    }
 
     return 0;
 
