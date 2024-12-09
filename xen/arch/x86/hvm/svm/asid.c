@@ -10,12 +10,14 @@
 #include <asm/amd.h>
 #include <asm/hvm/nestedhvm.h>
 #include <asm/hvm/svm/svm.h>
+#include <asm/hvm/svm/sev.h>
 
 #include "svm.h"
 
 void __init svm_asid_init(void)
 {
     unsigned int cpu = smp_processor_id();
+    uint32_t eax, ebx, ecx, edx;
     const struct cpuinfo_x86 *c;
     int nasids = 0;
 
@@ -24,6 +26,12 @@ void __init svm_asid_init(void)
     /* Check for erratum #170, and leave ASIDs disabled if it's present. */
     if ( !cpu_has_amd_erratum(c, AMD_ERRATUM_170) )
         nasids = cpuid_ebx(0x8000000aU);
+
+    /* This should be moved to sev.c while upstreaming */
+    cpuid(0x8000001f, &eax, &ebx, &ecx, &edx);
+
+    max_sev_asid = ecx;
+    min_sev_asid = edx;
 
     hvm_asid_init(nasids);
 }

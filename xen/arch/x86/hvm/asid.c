@@ -14,6 +14,7 @@
 
 #include <asm/bitops.h>
 #include <asm/hvm/asid.h>
+#include <asm/hvm/svm/sev.h>
 
 /* Xen command-line option to enable ASIDs */
 static bool __read_mostly opt_asid_enabled = true;
@@ -29,6 +30,7 @@ static DEFINE_SPINLOCK(hvm_asid_lock);
  * global allocator scheme and doesn't change during the lifecycle of
  * the domain. Once vcpus are initialized and are up, we assign the
  * same ASID to all vcpus of that domain at the first VMRUN. With the
+
  * new scheme, we don't need to assign the new ASID during MOV-TO-{CR3,
  * CR4}. In the case of INVLPG, we flush the TLB entries belonging to
  * the vcpu and do the reassignment of the ASID belonging to the given
@@ -57,10 +59,15 @@ int hvm_asid_init(int nasids)
     struct hvm_asid_data *data = &asid_data;
     static int8_t g_disabled = -1;
 
-    /* TODO(vaishali): Once we have SEV Operations, min_asid need to be
-    adjusted in SEV specific functions */
-    data->min_asid = 1;
-    data->max_asid = nasids - data->min_asid;
+    /* Rework this for the upstream */
+    if ( IS_ENABLED(CONFIG_COCO) ) {
+        data->min_asid = min_sev_asid;
+        data->max_asid = max_sev_asid;
+    } else {
+        data->min_asid = 1;
+        data->max_asid = nasids - data->min_asid;
+    }
+
     data->disabled = !opt_asid_enabled || (nasids <= 1);
 
     hvm_asid_bitmap = xzalloc_array(unsigned long,
