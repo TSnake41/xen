@@ -209,7 +209,7 @@ hypfs_op(unsigned int cmd, const char *arg1, unsigned long arg2, void *arg3, uns
 #ifdef CONFIG_X86
 xenpmu_op(unsigned int op, xen_pmu_params_t *arg)
 #endif
-dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1, uint64_t arg2)
+dom_coco_op(unsigned int cmd, void *arg)
 sev_hox_demo_op(uint64_t addr, uint64_t size)
 
 
