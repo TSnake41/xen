@@ -1492,7 +1492,6 @@ int xc_dom_coco_op(xc_interface *handle, unsigned int cmd, domid_t domid, uint64
     if ( arg == NULL )
         return -1;
 
-    arg->cmd = 1;
     arg->domid = domid;
     arg->address = arg1;
     arg->len = arg2;
