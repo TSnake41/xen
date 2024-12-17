@@ -52,7 +52,7 @@ do_sev_hox_demo_op(uint64_t addr, uint64_t size)
     page = get_page_from_gfn(current->domain, gfn_x(gfn), &p2mt, P2M_UNSHARE);
     if (!page)
     {
-	printk("%s: can't get page for 0x%lx gfn\n", __FUNCTION__, gfn);
+	printk("%s: can't get page for 0x%lx gfn\n", __FUNCTION__, gfn_x(gfn));
     }
 
     mfn = page_to_mfn(page);
