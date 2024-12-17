@@ -21,12 +21,16 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
         return -EINVAL;
 
     d = get_domain_by_id(domid);
-    if (!d)
+    if (!d){
+        printk(XENLOG_INFO "Domain lookup failed for domid: %u\n", domid);
         return -EINVAL;
+    }
 
+    printk(XENLOG_INFO "Domain id in svm_dom_coco_op is : %u\n", domid);
     if (!is_sev_domain(d))
         return -EINVAL;
 
+    printk(XENLOG_INFO "Handling command: %u\n", cmd);
     switch (cmd) {
         case COCO_DOM_ADD_MEM: {
             struct sev_data_launch_update_data sd_lud;
@@ -48,6 +52,7 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
             rc = -EINVAL;
 
     }
+    printk(XENLOG_INFO "reached the end of svm_dom_coco_op called\n");
     return rc;
 }
 
@@ -57,6 +62,8 @@ int  sev_domain_initialize(struct domain *d)
     struct sev_data_activate sd_a;
     int psp_ret;
     long rc = 0;
+
+    printk(XENLOG_INFO "sev_domain_initialise called\n");
 
     sd_ls.handle = 0;          /* generate new one */
     sd_ls.policy = 0;          /* NOKS policy */
@@ -95,9 +102,12 @@ int sev_domain_creation_finished(struct domain *d)
     int psp_ret;
     long rc = 0;
 
+    printk(XENLOG_INFO "sev_domain_creation_finished called\n");
+
     sd_lm.handle = d->arch.hvm.svm.asp_handle;
     sd_lm.address = __pa(d->arch.hvm.svm.measure);
     sd_lm.len = 32;
+
 
     rc = sev_do_cmd(SEV_CMD_LAUNCH_MEASURE, (void *)(&sd_lm), &psp_ret, true);
     if (rc) {
