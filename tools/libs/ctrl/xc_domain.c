@@ -1483,7 +1483,7 @@ int xc_get_hvm_param(xc_interface *handle, uint32_t dom, int param, unsigned lon
 }
 
 /* Toolstack specific function which calls svm_dom_coco_op via hypercall*/
-int xc_dom_coco_op(xc_interface *handle, unsigned int cmd, domid_t domid, uint64_t arg1, uint64_t arg2)
+int xc_dom_coco_op(xc_interface *handle, unsigned int cmd, domid_t domid, uint64_t gfn, uint64_t pages)
 {
     DECLARE_HYPERCALL_BUFFER(sev_launch_update_data_t, arg);
     int rc;
@@ -1493,8 +1493,8 @@ int xc_dom_coco_op(xc_interface *handle, unsigned int cmd, domid_t domid, uint64
         return -1;
 
     arg->domid = domid;
-    arg->address = arg1;
-    arg->len = arg2;
+    arg->gfn = gfn;
+    arg->pages = pages;
 
     rc = xencall2(handle->xcall, __HYPERVISOR_dom_coco_op,
                   COCO_DOM_ADD_MEM,

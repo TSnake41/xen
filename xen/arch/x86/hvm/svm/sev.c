@@ -1,6 +1,8 @@
 #include <xen/lib.h>
 #include <xen/guest_access.h>
 #include <xen/sched.h>
+#include <xen/page-size.h>
+#include <xen/pfn.h>
 #include <asm/hvm/svm/sev.h>
 #include <asm/hvm/svm/vmcb.h>
 #include <asm/psp-sev.h>
@@ -10,49 +12,79 @@ uint64_t __read_mostly pte_c_bit_mask;
 unsigned int __read_mostly min_sev_asid;
 unsigned int __read_mostly max_sev_asid;
 
-long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
-                     uint64_t arg2)
+static long add_memory(struct domain *d, domid_t domid, gfn_t gfn, uint64_t pages)
+{
+    long rc = 0;
+    int psp_ret;
+    struct sev_data_launch_update_data sd_lud;
+
+    for (size_t i = 0; i < pages; i++)
+    {
+        p2m_type_t p2mt;
+
+        mfn_t mfn = get_gfn_unshare(d, gfn + i, &p2mt);
+        if ( p2m_is_shared(p2mt) || !p2m_is_valid(p2mt) )
+            // Do not try to encrypt shared pages.
+            mfn = INVALID_MFN;
+
+        /* Check the passed page frame for basic validity. */
+        if ( unlikely(!mfn_valid(mfn)) )
+        {
+            printk("%s: Invalid GFN (%"PRI_xen_pfn")", __FUNCTION__, gfn);
+            rc = -ENOENT;
+            put_gfn(d, mfn);
+            break;
+        }
+
+        sd_lud.reserved = 0;
+        sd_lud.handle = d->arch.hvm.svm.asp_handle;
+        sd_lud.address = PFN_UP(mfn);
+        sd_lud.len = PAGE_SIZE;
+        rc = sev_do_cmd(SEV_CMD_LAUNCH_UPDATE_DATA, (void *)(&sd_lud), &psp_ret,
+                        true);
+        if (rc)
+        {
+            printk("%s: failed to LAUNCH_UPDATE_DATA to domain(%d): psp_ret %d (gfn=%" PRI_xen_pfn "\n",
+                    __FUNCTION__, domid, psp_ret, gfn + i);
+            break;
+        }
+    }
+    
+    return rc;
+}
+
+long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t gfn, uint64_t pages)
 {
     struct domain *d;
     int psp_ret;
     long rc = 0;
 
     if (!is_control_domain(current->domain))
-        return -EINVAL;
+        return -EPERM;
 
-    d = get_domain_by_id(domid);
-    if (!d){
+    d = rcu_lock_domain_by_id(domid);
+    if (!d) {
         printk(XENLOG_INFO "Domain lookup failed for domid: %u\n", domid);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     printk(XENLOG_INFO "Domain id in svm_dom_coco_op is : %u\n", domid);
     if (!is_sev_domain(d))
-        return -EINVAL;
+        return -EOPNOTSUPP;
 
     printk(XENLOG_INFO "Handling command: %u\n", cmd);
     switch (cmd) {
-        case COCO_DOM_ADD_MEM: {
-            struct sev_data_launch_update_data sd_lud;
-
-            sd_lud.reserved = 0;
-            sd_lud.handle = d->arch.hvm.svm.asp_handle;
-            sd_lud.address = arg1; /* can we trust dom0 for paddr? */
-            sd_lud.len = arg2;
-            rc = sev_do_cmd(SEV_CMD_LAUNCH_UPDATE_DATA, (void *)(&sd_lud), &psp_ret,
-                    true);
-            if (rc)
-                printk("%s: failed to LAUNCH_UPDATE_DATA to domain(%d): psp_ret %d\n",
-                       __FUNCTION__, domid, psp_ret);
-
+        case COCO_DOM_ADD_MEM:
+            add_memory(d, domid, gfn, pages);
             break;
-        }
         default:
-            printk ("%s: deprecated command called (%u)\n", __FUNCTION__, cmd);
+            printk ("%s: unsupported command called (%u)\n", __FUNCTION__, cmd);
             rc = -EINVAL;
 
     }
     printk(XENLOG_INFO "reached the end of svm_dom_coco_op called\n");
+
+    rcu_unlock_domain(d);
     return rc;
 }
 

@@ -5,9 +5,9 @@
 
 /* Map to the sev_dom_coco_op */
 struct sev_launch_update_data {
+    uint64_t gfn;
+    uint64_t pages;
     domid_t domid;
-    uint64_t address;
-    uint64_t len;
 };
 
 typedef struct sev_launch_update_data sev_launch_update_data_t;
