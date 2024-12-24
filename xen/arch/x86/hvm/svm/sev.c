@@ -33,25 +33,51 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
     printk(XENLOG_INFO "Handling command: %u\n", cmd);
     switch (cmd) {
         case COCO_DOM_ADD_MEM: {
-            struct sev_data_launch_update_data sd_lud;
+	    mfn_t mfn;
+	    unsigned long gmfn = arg1 >> PAGE_SHIFT;
+	    struct page_info *page;
+	    int i;
 
-            sd_lud.reserved = 0;
-            sd_lud.handle = d->arch.hvm.svm.asp_handle;
-            sd_lud.address = arg1; /* can we trust dom0 for paddr? */
-            sd_lud.len = arg2;
-            rc = sev_do_cmd(SEV_CMD_LAUNCH_UPDATE_DATA, (void *)(&sd_lud), &psp_ret,
-                    true);
-            if (rc)
-                printk("%s: failed to LAUNCH_UPDATE_DATA to domain(%d): psp_ret %d\n",
-                       __FUNCTION__, domid, psp_ret);
+	     /* Force the alignement on page boundary (address and size) */
+	    if  ( (arg1 & ~PAGE_MASK) || (arg2 & ~PAGE_MASK) )
+	    {
+		printk("%s: address and size must be aligned on page boundary\n",
+		       __FUNCTION__);
+		return -EINVAL;
+	    }
 
-            break;
-        }
+	    for (i = 0; i < (arg2 >> PAGE_SHIFT); i++, gmfn++)
+	    {
+		struct sev_data_launch_update_data sd_lud;
+
+		page = get_page_from_gfn(d, gmfn, NULL, P2M_ALLOC);
+		if ( unlikely (!page) )
+		    return -EINVAL;
+
+		mfn = page_to_mfn(page);
+		put_page(page);
+
+		sd_lud.reserved = 0;
+		sd_lud.handle = d->arch.hvm.svm.asp_handle;
+		sd_lud.address = mfn_x(mfn) << PAGE_SHIFT;
+		sd_lud.len = PAGE_SIZE;
+		rc = sev_do_cmd(SEV_CMD_LAUNCH_UPDATE_DATA, (void *)(&sd_lud),
+				&psp_ret, true);
+		if (rc)
+		{
+		    printk("%s: failed to LAUNCH_UPDATE_DATA dom(%d): err %d\n",
+			   __FUNCTION__, domid, psp_ret);
+		    goto out;
+		}
+	    }
+	    break;
+	}
         default:
             printk ("%s: deprecated command called (%u)\n", __FUNCTION__, cmd);
             rc = -EINVAL;
-
     }
+
+  out:
     printk(XENLOG_INFO "reached the end of svm_dom_coco_op called\n");
     return rc;
 }
