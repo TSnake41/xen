@@ -28,7 +28,10 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
 
     printk(XENLOG_INFO "Domain id in svm_dom_coco_op is : %u\n", domid);
     if (!is_sev_domain(d))
-        return -EINVAL;
+    {
+        rc = -EINVAL;
+        goto out;
+    }
 
     printk(XENLOG_INFO "Handling command: %u\n", cmd);
     switch (cmd) {
@@ -43,7 +46,8 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
 	    {
 		printk("%s: address and size must be aligned on page boundary\n",
 		       __FUNCTION__);
-		return -EINVAL;
+                rc = -EINVAL;
+                goto out;
 	    }
 
 	    for (i = 0; i < (arg2 >> PAGE_SHIFT); i++, gmfn++)
@@ -52,7 +56,10 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
 
 		page = get_page_from_gfn(d, gmfn, NULL, P2M_ALLOC);
 		if ( unlikely (!page) )
-		    return -EINVAL;
+                {
+                    rc = -EINVAL;
+                    goto out;
+                }
 
 		mfn = page_to_mfn(page);
 		put_page(page);
@@ -79,6 +86,7 @@ long svm_dom_coco_op(unsigned int cmd, domid_t domid, uint64_t arg1,
 
   out:
     printk(XENLOG_INFO "reached the end of svm_dom_coco_op called\n");
+    put_domain(d);
     return rc;
 }
 
