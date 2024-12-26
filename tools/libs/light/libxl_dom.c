@@ -1081,6 +1081,7 @@ int libxl__build_hvm(libxl__gc *gc, uint32_t domid,
     }
 
     dom->container_type = XC_DOM_HVM_CONTAINER;
+    dom->coco = info->coco.val;
 
     /* The params from the configuration file are in Mb, which are then
      * multiplied by 1 Kb. This was then divided off when calling
@@ -1143,15 +1144,6 @@ int libxl__build_hvm(libxl__gc *gc, uint32_t domid,
     dom->console_domid = state->console_domid;
     dom->xenstore_evtchn = state->store_port;
     dom->xenstore_domid = state->store_domid;
-
-    if (info->coco.val) {
-        LOG(DEBUG, "xc_dom_coco_op called, domid is %d", domid);
-        rc = xc_dom_coco_op(ctx->xch, 1, (uint16_t)domid, (uint64_t)dom->kernel_blob, dom->kernel_size);
-        if (rc) {
-            LOG(ERROR, "Failed to encrypt kernel memory for domain\n");
-            goto out;
-        }
-    }
 
     rc = libxl__domain_device_construct_rdm(gc, d_config,
                                             info->u.hvm.rdm_mem_boundary_memkb*1024,

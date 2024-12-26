@@ -32,6 +32,7 @@
 
 #include "xg_private.h"
 #include "xg_core.h"
+#include "xg_dom_coco.h"
 #include <xen/hvm/params.h>
 #include <xen/grant_table.h>
 
@@ -200,6 +201,13 @@ int xc_dom_boot_image(struct xc_dom_image *dom)
     /* misc x86 stuff */
     if ( (rc = dom->arch_hooks->bootlate(dom)) != 0 )
         return rc;
+
+    // Encrypt domain pages
+    if ( dom->coco )
+    {
+        xg_dom_coco_encrypt_seg(dom->xch, dom, dom->kernel_seg, "kernel");
+        xg_dom_coco_encrypt_seg(dom->xch, dom, dom->start_info_seg, "start_info");
+    }
 
     /* let the vm run */
     if ( (rc = dom->arch_hooks->vcpu(dom)) != 0 )
