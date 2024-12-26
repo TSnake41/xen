@@ -205,8 +205,10 @@ int xc_dom_boot_image(struct xc_dom_image *dom)
     // Encrypt domain pages
     if ( dom->coco )
     {
-        xg_dom_coco_encrypt_seg(dom->xch, dom, dom->kernel_seg, "kernel");
-        xg_dom_coco_encrypt_seg(dom->xch, dom, dom->start_info_seg, "start_info");
+        if ( (rc = xg_dom_coco_encrypt_seg(dom->xch, dom, dom->kernel_seg, "kernel") != 0) )
+            return rc;
+        if ( (rc = xg_dom_coco_encrypt_seg(dom->xch, dom, dom->start_info_seg, "start_info") != 0) )
+            return rc;
     }
 
     /* let the vm run */
