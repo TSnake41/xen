@@ -141,7 +141,7 @@ int sev_domain_creation_finished(struct domain *d)
     sd_lm.handle = d->arch.hvm.svm.asp_handle;
     sd_lm.address = __pa(d->arch.hvm.svm.measure);
     sd_lm.len = 32;
-
+    sd_lm.reserved = 0;
 
     rc = sev_do_cmd(SEV_CMD_LAUNCH_MEASURE, (void *)(&sd_lm), &psp_ret, true);
     if (rc) {
