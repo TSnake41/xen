@@ -145,8 +145,8 @@ int sev_domain_creation_finished(struct domain *d)
 
     rc = sev_do_cmd(SEV_CMD_LAUNCH_MEASURE, (void *)(&sd_lm), &psp_ret, true);
     if (rc) {
-      printk("%s: failed to LAUNCH_MEASURE domain(%d): psp_ret %d\n",
-             __FUNCTION__, d->domain_id, psp_ret);
+      printk("%s: failed to LAUNCH_MEASURE domain(%d): psp_ret %d, rc %ld\n",
+             __FUNCTION__, d->domain_id, psp_ret, rc);
       return rc;
     }
 
@@ -154,8 +154,8 @@ int sev_domain_creation_finished(struct domain *d)
 
     rc = sev_do_cmd(SEV_CMD_LAUNCH_FINISH, (void *)(&sd_lf), &psp_ret, true);
     if (rc) {
-      printk("%s: failed to LAUNCH_FINISH domain(%d): psp_ret %d\n",
-             __FUNCTION__, d->domain_id, psp_ret);
+      printk("%s: failed to LAUNCH_FINISH domain(%d): psp_ret %d, rc %ld\n",
+             __FUNCTION__, d->domain_id, psp_ret, rc);
       return rc;
     }
 
