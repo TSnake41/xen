@@ -1130,7 +1130,7 @@ static int cf_check svm_domain_initialise(struct domain *d)
 static void cf_check svm_domain_creation_finished(struct domain *d)
 {
     if ( is_sev_domain(d) )
-        if ( !sev_domain_creation_finished(d) )
+        if ( sev_domain_creation_finished(d) )
             domain_crash(d);
 }
 
