@@ -571,8 +571,8 @@ struct svm_domain {
 
     uint32_t asp_handle;
     uint32_t asp_policy;
-    u8       measure[32];
-    uint32_t measure_len;  /*32 bytes*/
+    u8       measure[96];
+    uint32_t measure_len;  /*96 bytes*/
     u8      state;
 };
 

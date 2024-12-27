@@ -140,13 +140,16 @@ int sev_domain_creation_finished(struct domain *d)
 
     sd_lm.handle = d->arch.hvm.svm.asp_handle;
     sd_lm.address = __pa(d->arch.hvm.svm.measure);
-    sd_lm.len = 32;
+    sd_lm.len = 96;
     sd_lm.reserved = 0;
 
     rc = sev_do_cmd(SEV_CMD_LAUNCH_MEASURE, (void *)(&sd_lm), &psp_ret, true);
     if (rc) {
       printk("%s: failed to LAUNCH_MEASURE domain(%d): psp_ret %d, rc %ld\n",
              __FUNCTION__, d->domain_id, psp_ret, rc);
+
+      if (psp_ret == SEV_RET_INVALID_LEN)
+        printk("Expecting %"PRIu32" bytes\n", sd_lm.len);
       return rc;
     }
 
