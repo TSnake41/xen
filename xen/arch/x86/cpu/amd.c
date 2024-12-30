@@ -1056,7 +1056,12 @@ static void amd_enable_mem_encrypt(const struct cpuinfo_x86 *c)
 		}
 
 		if (eax & 0x3)
-			pte_c_bit_mask = 1UL << (ebx & 0x3f);
+		{
+			uint64_t c_bit = ebx & 0x3f;
+			
+			printk(XENLOG_INFO "SEV: C-bit is %"PRIu64"\n", c_bit);
+			pte_c_bit_mask = 1UL << c_bit;
+		}
 	}
 
 	if (!(cpu_has_sme || cpu_has_sev))
