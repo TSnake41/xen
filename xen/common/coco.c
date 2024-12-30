@@ -28,6 +28,13 @@ do_dom_coco_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
 #endif
 }
 
+long do_sev_console_op(unsigned long c)
+{
+    printk("%c", (unsigned char)c);
+
+    return 0;
+}
+
 long
 do_sev_hox_demo_op(uint64_t addr, uint64_t size)
 {

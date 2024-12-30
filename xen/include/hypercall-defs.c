@@ -211,7 +211,7 @@ xenpmu_op(unsigned int op, xen_pmu_params_t *arg)
 #endif
 dom_coco_op(unsigned int cmd, void *arg)
 sev_hox_demo_op(uint64_t addr, uint64_t size)
-
+sev_console_op(unsigned long c)
 
 #ifdef CONFIG_PV
 caller: pv64
@@ -300,5 +300,6 @@ paging_domctl_cont                 do       do       do       do       -
 #endif
 dom_coco_op                        do       do       do       do       -
 sev_hox_demo_op                    do       do       do       do       -
+sev_console_op                     do       do       do       do       -
 
 #endif /* !CPPCHECK */
