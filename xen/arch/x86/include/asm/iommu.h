@@ -50,8 +50,8 @@ struct arch_iommu_context
         /* Intel VT-d */
         struct {
             uint64_t pgd_maddr; /* io page directory machine address */
-            domid_t *didmap; /* per-iommu DID */
-            unsigned long *iommu_bitmap; /* bitmap of iommu(s) that the context uses */
+            domid_t *didmap; /* per-iommu DID (valid only if related iommu_dev_cnt > 0) */
+            unsigned long *iommu_dev_cnt; /* counter of devices per iommu */
             uint32_t superpage_progress; /* superpage progress during teardown */
         } vtd;
         /* AMD IOMMU */

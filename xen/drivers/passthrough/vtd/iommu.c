@@ -586,13 +586,10 @@ static int __must_check cf_check iommu_flush_iotlb(struct domain *d,
 
         iommu = drhd->iommu;
 
-        if ( !test_bit(iommu->index, ctx->arch.vtd.iommu_bitmap) )
+        if ( !ctx->arch.vtd.iommu_dev_cnt[iommu->index] )
             continue;
 
         iommu_domid = ctx->arch.vtd.didmap[iommu->index];
-
-        if ( iommu_domid == -1 )
-            continue;
 
         flush_dev_iotlb = !!find_ats_dev_drhd(iommu);
 
@@ -1267,12 +1264,14 @@ static void __hwdom_init cf_check intel_iommu_hwdom_init(struct domain *d)
 /**
  * Apply a context on a device.
  * @param domain Domain of the context
- * @param iommu IOMMU hardware to use (must match device iommu)
  * @param ctx IOMMU context to apply
- * @param devfn PCI device function (may be different to pdev)
+ * @param iommu IOMMU hardware to use (must match device iommu)
+ * @param bus PCI device bus
+ * @param devfn PCI device function
  */
 int apply_context_single(struct domain *domain, struct iommu_context *ctx,
-                         struct vtd_iommu *iommu, uint8_t bus, uint8_t devfn)
+                         struct vtd_iommu *iommu, uint8_t bus, uint8_t devfn,
+                         struct iommu_context *prev_ctx)
 {
     struct context_entry *context, *context_entries, lctxt;
     __uint128_t res, old;
@@ -1365,13 +1364,20 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
     if ( rc > 0 )
         rc = 0;
 
-    set_bit(iommu->index, ctx->arch.vtd.iommu_bitmap);
+    if ( prev_ctx )
+    {
+        /* Don't underflow the counter. */
+        BUG_ON(!prev_ctx->arch.vtd.iommu_dev_cnt[iommu->index]);
+        prev_ctx->arch.vtd.iommu_dev_cnt[iommu->index]--;
+    }
+
+    ctx->arch.vtd.iommu_dev_cnt[iommu->index]++;
 
     unmap_vtd_domain_page(context_entries);
     spin_unlock(&iommu->lock);
 
     if ( !seg && !rc )
-        rc = me_wifi_quirk(domain, bus, devfn, did, 0, ctx);
+        rc = me_wifi_quirk(domain, bus, devfn, did, 0, ctx, prev_ctx);
 
     return rc;
 
@@ -1382,9 +1388,11 @@ int apply_context_single(struct domain *domain, struct iommu_context *ctx,
 }
 
 int apply_context(struct domain *d, struct iommu_context *ctx,
-                  struct pci_dev *pdev, u8 devfn)
+                  struct pci_dev *pdev, u8 devfn,
+                  struct iommu_context *prev_ctx)
 {
-    const struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
+    struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
+    struct vtd_iommu *iommu = drhd->iommu;
     int ret = 0;
 
     if ( !drhd )
@@ -1401,10 +1409,10 @@ int apply_context(struct domain *d, struct iommu_context *ctx,
 
     ASSERT(pcidevs_locked());
 
-    ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, devfn);
+    ret = apply_context_single(d, ctx, iommu, pdev->bus, pdev->devfn, prev_ctx);
 
     if ( !ret && ats_device(pdev, drhd) > 0 )
-        enable_ats_device(pdev, &drhd->iommu->ats_devices);
+        enable_ats_device(pdev, &iommu->ats_devices);
 
     if ( !ret && devfn == pdev->devfn )
         pci_vtd_quirk(pdev);
@@ -1413,7 +1421,7 @@ int apply_context(struct domain *d, struct iommu_context *ctx,
 }
 
 int unapply_context_single(struct domain *domain, struct vtd_iommu *iommu,
-                           uint8_t bus, uint8_t devfn)
+                           struct iommu_context *prev_ctx, uint8_t bus, uint8_t devfn)
 {
     struct context_entry *context, *context_entries;
     u64 maddr;
@@ -1461,12 +1469,18 @@ int unapply_context_single(struct domain *domain, struct vtd_iommu *iommu,
     if ( rc > 0 )
         rc = 0;
 
+    if ( !rc )
+    {
+        BUG_ON(!prev_ctx->arch.vtd.iommu_dev_cnt[iommu->index]);
+        prev_ctx->arch.vtd.iommu_dev_cnt[iommu->index]--;
+    }
+
     spin_unlock(&iommu->lock);
     unmap_vtd_domain_page(context_entries);
 
     if ( !iommu->drhd->segment && !rc )
         rc = me_wifi_quirk(domain, bus, devfn, DOMID_INVALID, UNMAP_ME_PHANTOM_FUNC,
-                           NULL);
+                           NULL, prev_ctx);
 
     if ( rc && !is_hardware_domain(domain) && domain != dom_io )
     {
@@ -1934,8 +1948,8 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
             printk(" Context %d (%"PRIx64")\n", i, ctx->arch.vtd.pgd_maddr);
 
             for (iommu_no = 0; iommu_no < nr_iommus; iommu_no++)
-                printk("  IOMMU %hu (used=%u; did=%hu)\n", iommu_no,
-                       test_bit(iommu_no, ctx->arch.vtd.iommu_bitmap),
+                printk("  IOMMU %hu (used=%lu; did=%hu)\n", iommu_no,
+                       ctx->arch.vtd.iommu_dev_cnt[iommu_no],
                        ctx->arch.vtd.didmap[iommu_no]);
 
             list_for_each_entry(pdev, &ctx->devices, context_list)
@@ -2296,10 +2310,12 @@ static int cf_check intel_iommu_context_init(struct domain *d,
     if ( !ctx->arch.vtd.didmap )
         return -ENOMEM;
 
-    ctx->arch.vtd.iommu_bitmap = xzalloc_array(unsigned long,
-                                               BITS_TO_LONGS(nr_iommus));
-    if ( !ctx->arch.vtd.iommu_bitmap )
+    ctx->arch.vtd.iommu_dev_cnt = xzalloc_array(unsigned long, nr_iommus);
+    if ( !ctx->arch.vtd.iommu_dev_cnt )
+    {
+        xfree(ctx->arch.vtd.didmap);
         return -ENOMEM;
+    }
 
     ctx->arch.vtd.superpage_progress = 0;
 
@@ -2466,8 +2482,7 @@ static int cf_check intel_iommu_context_teardown(struct domain *d,
     {
         unsigned long index = drhd->iommu->index;
 
-        if ( test_bit(index, ctx->arch.vtd.iommu_bitmap) )
-            iommu_free_domid(ctx->arch.vtd.didmap[index], drhd->iommu->domid_bitmap);
+        iommu_free_domid(ctx->arch.vtd.didmap[index], drhd->iommu->domid_bitmap);
     }
 
     xfree(ctx->arch.vtd.didmap);
@@ -2517,7 +2532,7 @@ static int cf_check intel_iommu_attach(struct domain *d, struct pci_dev *pdev,
             return ret;
     }
 
-    ret = apply_context(d, ctx, pdev, pdev->devfn);
+    ret = apply_context(d, ctx, pdev, pdev->devfn, NULL);
 
     if ( ret )
         return ret;
@@ -2536,7 +2551,7 @@ static int cf_check intel_iommu_detach(struct domain *d, struct pci_dev *pdev,
     if (!pdev || !drhd)
         return -EINVAL;
 
-    ret = unapply_context_single(d, drhd->iommu, pdev->bus, pdev->devfn);
+    ret = unapply_context_single(d, drhd->iommu, prev_ctx, pdev->bus, pdev->devfn);
 
     if ( ret )
         return ret;
@@ -2553,9 +2568,8 @@ static int cf_check intel_iommu_reattach(struct domain *d,
                                          struct iommu_context *ctx)
 {
     int ret;
-    const struct acpi_drhd_unit *drhd = acpi_find_matched_drhd_unit(pdev);
 
-    if (!pdev || !drhd)
+    if ( !pdev )
         return -EINVAL;
 
     ret = intel_iommu_dev_rmrr(d, pdev, ctx, false);
@@ -2563,7 +2577,7 @@ static int cf_check intel_iommu_reattach(struct domain *d,
     if ( ret )
         return ret;
 
-    ret = apply_context_single(d, ctx, drhd->iommu, pdev->bus, pdev->devfn);
+    ret = apply_context(d, ctx, pdev, pdev->devfn, prev_ctx);
 
     if ( ret )
         return ret;
@@ -2584,7 +2598,7 @@ static int cf_check intel_iommu_add_devfn(struct domain *d,
     if (!pdev || !drhd)
         return -EINVAL;
 
-    return apply_context(d, ctx, pdev, devfn);
+    return apply_context(d, ctx, pdev, devfn, NULL);
 }
 
 static int cf_check intel_iommu_remove_devfn(struct domain *d, struct pci_dev *pdev,
@@ -2595,7 +2609,7 @@ static int cf_check intel_iommu_remove_devfn(struct domain *d, struct pci_dev *p
     if (!pdev || !drhd)
         return -EINVAL;
 
-    return unapply_context_single(d, drhd->iommu, pdev->bus, devfn);
+    return unapply_context_single(d, drhd->iommu, NULL, pdev->bus, devfn);
 }
 
 static uint64_t cf_check intel_iommu_get_max_iova(struct domain *d)

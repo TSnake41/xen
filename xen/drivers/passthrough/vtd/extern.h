@@ -79,9 +79,11 @@ void free_pgtable_maddr(u64 maddr);
 void *map_vtd_domain_page(u64 maddr);
 void unmap_vtd_domain_page(const void *va);
 int apply_context_single(struct domain *domain, struct iommu_context *ctx,
-                         struct vtd_iommu *iommu, uint8_t bus, uint8_t devfn);
+                         struct vtd_iommu *iommu, uint8_t bus, uint8_t devfn,
+                         struct iommu_context *prev_ctx);
 int unapply_context_single(struct domain *domain, struct vtd_iommu *iommu,
-                           uint8_t bus, uint8_t devfn);
+                           struct iommu_context *prev_ctx, uint8_t bus,
+                           uint8_t devfn);
 int cf_check intel_iommu_get_reserved_device_memory(
     iommu_grdm_t *func, void *ctxt);
 
@@ -103,7 +105,8 @@ void vtd_ops_preamble_quirk(struct vtd_iommu *iommu);
 void vtd_ops_postamble_quirk(struct vtd_iommu *iommu);
 int __must_check me_wifi_quirk(struct domain *domain, uint8_t bus,
                                uint8_t devfn, domid_t domid,
-                               unsigned int mode, struct iommu_context *ctx);
+                               unsigned int mode, struct iommu_context *ctx,
+                               struct iommu_context *prev_ctx);
 void pci_vtd_quirk(const struct pci_dev *);
 void quirk_iommu_caps(struct vtd_iommu *iommu);
 
