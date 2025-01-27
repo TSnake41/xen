@@ -307,18 +307,17 @@ static int map_identity_region(struct domain *d, struct iommu_context *ctx,
     unsigned int flush_flags = 0;
     size_t page_count = end_pfn - base_pfn + 1;
 
-    if ( ctx->opaque )
+    if ( ctx->opaque && !ctx->id )
     {
+        int i;
         this_cpu(iommu_dont_flush_iotlb) = true;
-        while ( base_pfn < end_pfn )
+
+        for (i = 0; i < page_count; i++)
         {
-            ret = p2m_add_identity_entry(d, base_pfn, p2ma, flag);
+            ret = p2m_add_identity_entry(d, base_pfn + i, p2ma, flag);
 
             if ( ret )
-            {
-                this_cpu(iommu_dont_flush_iotlb) = false;
-                return ret;
-            }
+                break;
 
             base_pfn++;
         }
@@ -326,12 +325,17 @@ static int map_identity_region(struct domain *d, struct iommu_context *ctx,
     }
     else
     {
-        ret = iommu_map(d, _dfn(base_pfn), _mfn(base_pfn), page_count,
-                        p2m_access_to_iommu_flags(p2ma), &flush_flags,
-                        ctx->id);
+        int i;
 
-        if ( ret )
-            return ret;
+        for (i = 0; i < page_count; i++)
+        {
+            ret = iommu_map(d, _dfn(base_pfn + i), _mfn(base_pfn + i), 1,
+                            p2m_access_to_iommu_flags(p2ma), &flush_flags,
+                            ctx->id);
+
+            if ( ret )
+                break;
+        }
     }
 
     ret = iommu_iotlb_flush(d, _dfn(base_pfn), page_count, flush_flags,
@@ -390,6 +394,11 @@ int iommu_identity_mapping(struct domain *d, struct iommu_context *ctx,
     if ( !map )
         return -ENOMEM;
 
+    map->base = base;
+    map->end = end;
+    map->access = p2ma;
+    map->count = 1;
+
     printk("Mapping [%"PRI_mfn"x:%"PRI_mfn"] for d%dc%d\n", base_pfn, end_pfn,
            d->domain_id, ctx->id);
     ret = map_identity_region(d, ctx, base_pfn, end_pfn, p2ma, flag);
@@ -400,6 +409,7 @@ int iommu_identity_mapping(struct domain *d, struct iommu_context *ctx,
         return ret;
     }
 
+    list_add(&map->list, &ctx->arch.identity_maps);
     return 0;
 }
 
