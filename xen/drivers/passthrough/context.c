@@ -347,6 +347,10 @@ int iommu_iotlb_flush_all(struct domain *d, u16 ctx_no, unsigned int flush_flags
     struct iommu_context *ctx;
     int rc;
 
+    if ( !is_iommu_enabled(d) || !hd->platform_ops->iotlb_flush ||
+         !flush_flags )
+        return 0;
+
     if ( !(ctx = iommu_get_context(d, ctx_no)) )
         return -ENOENT;
 
