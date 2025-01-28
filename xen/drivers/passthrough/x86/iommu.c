@@ -271,6 +271,7 @@ static int unmap_identity_region(struct domain *d, struct iommu_context *ctx,
 
     if ( ctx->opaque && !ctx->id )
     {
+        #ifdef CONFIG_HVM
         this_cpu(iommu_dont_flush_iotlb) = true;
         while ( base_pfn < end_pfn )
         {
@@ -280,6 +281,9 @@ static int unmap_identity_region(struct domain *d, struct iommu_context *ctx,
             base_pfn++;
         }
         this_cpu(iommu_dont_flush_iotlb) = false;
+        #else
+        ASSERT_UNREACHABLE();
+        #endif
     }
     else
     {
@@ -309,6 +313,7 @@ static int map_identity_region(struct domain *d, struct iommu_context *ctx,
 
     if ( ctx->opaque && !ctx->id )
     {
+        #ifdef CONFIG_HVM
         int i;
         this_cpu(iommu_dont_flush_iotlb) = true;
 
@@ -322,6 +327,9 @@ static int map_identity_region(struct domain *d, struct iommu_context *ctx,
             base_pfn++;
         }
         this_cpu(iommu_dont_flush_iotlb) = false;
+        #else
+        ASSERT_UNREACHABLE();
+        #endif
     }
     else
     {
