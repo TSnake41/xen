@@ -267,7 +267,7 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 {
     unsigned int flush_flags = 0;
     struct iommu_context *ctx;
-    int rc;
+    int rc = 0;
 
     if ( dom_iommu(d)->no_dma )
         return 0;
