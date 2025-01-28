@@ -1929,7 +1929,7 @@ static struct iommu_state {
     uint32_t fectl;
 } *__read_mostly iommu_state;
 
-static void arch_iommu_dump_domain_contexts(struct domain *d)
+static void cf_check arch_iommu_dump_domain_contexts(struct domain *d)
 {
     unsigned int i, iommu_no;
     struct pci_dev *pdev;
@@ -1962,7 +1962,7 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
     }
 }
 
-static void arch_iommu_dump_contexts(unsigned char key)
+static void cf_check arch_iommu_dump_contexts(unsigned char key)
 {
     struct domain *d;
 

@@ -55,7 +55,7 @@ struct iommu_context * cf_check iommu_get_context(struct domain *d, u16 ctx_no) 
     return ctx;
 }
 
-void iommu_put_context(struct iommu_context *ctx)
+void cf_check iommu_put_context(struct iommu_context *ctx)
 {
     rspin_unlock(&ctx->lock);
 }
