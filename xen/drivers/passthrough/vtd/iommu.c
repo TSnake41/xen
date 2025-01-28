@@ -2332,11 +2332,16 @@ static int cf_check intel_iommu_context_init(struct domain *d,
          * If no-dma mode is specified, it's always non-opaque as the pagetable is
          * always managed regardless of the rest.
          */
-        ctx->opaque = iommu_use_hap_pt(d);
-
-        /* no-dma mode implies not sharing hap. */
         if (is_hardware_domain(d) && iommu_hwdom_no_dma)
+            /* no-dma mode implies not sharing hap. */
             ctx->opaque = false;
+        else if ( iommu_use_hap_pt(d) )
+        {
+            pagetable_t pgt = p2m_get_pagetable(p2m_get_hostp2m(d));
+            ctx->arch.vtd.pgd_maddr = pagetable_get_paddr(pgt);
+
+            ctx->opaque = true;
+        }
     }
 
     // TODO: Allocate IOMMU domid only when attaching devices ?
