@@ -269,7 +269,7 @@ static int unmap_identity_region(struct domain *d, struct iommu_context *ctx,
 {
     int ret = 0;
 
-    if ( ctx->opaque )
+    if ( ctx->opaque && !ctx->id )
     {
         this_cpu(iommu_dont_flush_iotlb) = true;
         while ( base_pfn < end_pfn )

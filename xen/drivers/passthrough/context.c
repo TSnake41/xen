@@ -274,13 +274,13 @@ int iommu_legacy_unmap(struct domain *d, dfn_t dfn, unsigned long page_count)
 
     ctx = iommu_get_context(d, 0);
 
-    if ( ctx->opaque )
-        return 0;
+    if ( !ctx->opaque )
+    {
+        rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags, 0);
 
-    rc = iommu_unmap(d, dfn, page_count, 0, &flush_flags, 0);
-
-    if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
-        rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags, 0);
+        if ( !this_cpu(iommu_dont_flush_iotlb) && !rc )
+            rc = iommu_iotlb_flush(d, dfn, page_count, flush_flags, 0);
+    }
 
     iommu_put_context(ctx);
 
