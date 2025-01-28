@@ -329,7 +329,7 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
 
     hd->allow_pv_iommu = true;
 
-    iommu_context_init(d, &hd->default_ctx, 0, IOMMU_CONTEXT_INIT_default);
+    ret = iommu_context_init(d, &hd->default_ctx, 0, IOMMU_CONTEXT_INIT_default);
 
     rwlock_init(&hd->other_contexts.lock);
     hd->other_contexts.initialized = (atomic_t)ATOMIC_INIT(0);
@@ -337,7 +337,7 @@ int iommu_domain_init(struct domain *d, unsigned int opts)
     hd->other_contexts.bitmap = NULL;
     hd->other_contexts.map = NULL;
 
-    return 0;
+    return ret;
 }
 
 static void cf_check iommu_dump_page_tables(unsigned char key)
