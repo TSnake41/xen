@@ -1948,7 +1948,7 @@ static void arch_iommu_dump_domain_contexts(struct domain *d)
             printk(" Context %d (%"PRIx64")\n", i, ctx->arch.vtd.pgd_maddr);
 
             for (iommu_no = 0; iommu_no < nr_iommus; iommu_no++)
-                printk("  IOMMU %hu (used=%lu; did=%hu)\n", iommu_no,
+                printk("  IOMMU %u (used=%lu; did=%hu)\n", iommu_no,
                        ctx->arch.vtd.iommu_dev_cnt[iommu_no],
                        ctx->arch.vtd.didmap[iommu_no]);
 
